@@ -29,3 +29,38 @@ def test_can_construct_evolvegcn_o():
     assert m is not None
     # Node embedding should be initialized
     assert m.node_emb.weight.shape == (50, 64)
+
+
+from torch_geometric.data import Data
+
+
+def _make_dummy_snapshots(N: int, T: int) -> list[Data]:
+    snaps = []
+    for _ in range(T):
+        ei = torch.randint(0, N, (2, N * 2))
+        d = Data(edge_index=ei, num_nodes=N)
+        snaps.append(d)
+    return snaps
+
+
+def test_evolvegcn_forward_shape():
+    N, T, D = 50, 5, 64
+    m = EvolveGCN_O(num_nodes=N, feat_dim=D, hidden_dim=D, num_layers=2, dropout=0.0)
+    snaps = _make_dummy_snapshots(N, T)
+    Z = m(snaps, time_step=T - 1)
+    assert Z.shape == (N, D), f"expected ({N}, {D}), got {Z.shape}"
+
+
+def test_evolvegcn_gradient_flows():
+    N, T, D = 50, 4, 64
+    m = EvolveGCN_O(num_nodes=N, feat_dim=D, hidden_dim=D, num_layers=2, dropout=0.0)
+    snaps = _make_dummy_snapshots(N, T)
+    Z = m(snaps, time_step=T - 1)
+    loss = Z.sum()
+    loss.backward()
+    # At least one parameter must have finite gradient
+    has_grad = any(
+        p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0
+        for p in m.parameters()
+    )
+    assert has_grad, "no finite non-zero gradient on any parameter"

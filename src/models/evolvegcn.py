@@ -80,9 +80,31 @@ class EvolveGCN_O(DynamicLinkPredictor):
     def forward(self, snapshots, time_step):
         """Run upstream EGCN-O through snapshots [0..time_step].
 
-        Implemented in Task 4. This stub keeps the class instantiable.
+        Translates our DynamicGraph snapshots into the upstream's
+        (A_list, Nodes_list, nodes_mask_list) format.
+
+        Returns Z^{time_step} ∈ R^{num_nodes × hidden_dim}.
         """
-        raise NotImplementedError("EvolveGCN_O.forward — implemented in Task 4")
+        device = self.node_emb.weight.device
+        N = self.num_nodes
+        node_ids = torch.arange(N, device=device)
+        node_emb = self.node_emb(node_ids)  # [N, feat_dim] — same across snapshots
+
+        A_list, Nodes_list, mask_list = [], [], []
+        for tau in range(time_step + 1):
+            snap = snapshots[tau]
+            ei = snap.edge_index.to(device)
+            if ei.numel() == 0:
+                # Empty snapshot — self-loops only so adjacency is well-defined
+                ei = torch.stack([node_ids, node_ids], dim=0)
+            vals = torch.ones(ei.shape[1], device=device)
+            A = torch.sparse_coo_tensor(ei, vals, (N, N)).coalesce()
+            A_list.append(A)
+            Nodes_list.append(node_emb)
+            mask_list.append(None)  # dead code in upstream — None is fine
+
+        Z = self.core(A_list, Nodes_list, mask_list)
+        return Z
 
     def predict_link(self, Z, edges):
         return self.decoder(Z, edges)
