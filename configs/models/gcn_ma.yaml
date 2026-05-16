@@ -1,7 +1,7 @@
 name: gcn_ma
 feat_dim: 3            # [degree, CC, AS]
-hidden_dim: 128
-num_heads: 8
+hidden_dim: 64
+num_heads: 4
 dropout: 0.1
 lr: 1.0e-3
 weight_decay: 1.0e-5
