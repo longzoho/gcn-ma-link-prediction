@@ -62,3 +62,20 @@ def test_lstm_weight_updater_gradients_flow():
     # The LSTM cell should also accumulate grads on its own params
     for p in updater.parameters():
         assert p.grad is None or torch.isfinite(p.grad).all()
+
+
+from src.models.gcn_ma.attention import MultiHeadSelfAttention
+import pytest
+
+
+def test_attention_preserves_shape():
+    N, D = 10, 16
+    attn = MultiHeadSelfAttention(embed_dim=D, num_heads=4, dropout=0.0)
+    H = torch.randn(N, D)
+    Z = attn(H)
+    assert Z.shape == (N, D)
+
+
+def test_attention_embed_dim_divisible_by_heads_validated():
+    with pytest.raises(ValueError):
+        MultiHeadSelfAttention(embed_dim=10, num_heads=3, dropout=0.0)
