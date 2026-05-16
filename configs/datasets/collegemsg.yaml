@@ -1,0 +1,6 @@
+name: collegemsg
+raw_url: https://snap.stanford.edu/data/CollegeMsg.txt.gz
+raw_filename: CollegeMsg.txt.gz
+num_time_steps: 47
+beta: 0.8
+train_ratio: 0.8
