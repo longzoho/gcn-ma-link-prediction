@@ -110,3 +110,47 @@ def test_link_decoder_logit_not_probability():
             found_outside = True
             break
     assert found_outside, "decoder appears to apply sigmoid internally"
+
+
+from torch_geometric.data import Data
+
+from src.models.gcn_ma.model import GCN_MA
+
+
+def _make_dummy_snapshots(N: int, T: int, F_in: int = 3) -> list[Data]:
+    snaps = []
+    for _ in range(T):
+        d = Data(edge_index=torch.randint(0, N, (2, N * 2)), num_nodes=N)
+        d.x = torch.randn(N, F_in)
+        d.S_hat = torch.eye(N) + 0.1 * torch.rand(N, N)
+        snaps.append(d)
+    return snaps
+
+
+def test_gcn_ma_forward_shape():
+    N, T, D = 8, 5, 16
+    model = GCN_MA(feat_dim=3, hidden_dim=D, num_heads=4, dropout=0.0)
+    snapshots = _make_dummy_snapshots(N, T)
+    Z = model(snapshots, time_step=T - 1)
+    assert Z.shape == (N, D)
+
+
+def test_gcn_ma_gradient_flows():
+    N, T, D = 8, 4, 16
+    model = GCN_MA(feat_dim=3, hidden_dim=D, num_heads=4, dropout=0.0)
+    snapshots = _make_dummy_snapshots(N, T)
+    Z = model(snapshots, time_step=T - 1)
+    loss = Z.sum()
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.requires_grad]
+    assert any(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+def test_gcn_ma_predict_link():
+    N, T, D = 8, 3, 16
+    model = GCN_MA(feat_dim=3, hidden_dim=D, num_heads=4, dropout=0.0)
+    snapshots = _make_dummy_snapshots(N, T)
+    Z = model(snapshots, time_step=T - 1)
+    edges = torch.tensor([[0, 1, 2], [3, 4, 5]])
+    logits = model.predict_link(Z, edges)
+    assert logits.shape == (3,)

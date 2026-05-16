@@ -1,0 +1,11 @@
+name: gcn_ma
+feat_dim: 3            # [degree, CC, AS]
+hidden_dim: 128
+num_heads: 8
+dropout: 0.1
+lr: 1.0e-3
+weight_decay: 1.0e-5
+optimizer: adam
+epochs: 200
+early_stop_patience: 20
+grad_clip_max_norm: 5.0
