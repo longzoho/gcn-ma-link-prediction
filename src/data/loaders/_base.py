@@ -29,6 +29,7 @@ class SNAPTemporalLoader(ABC):
 
     dataset_name: str = "unknown"
     preprocess_version: str = "v1"
+    binning_strategy: str = "equal_time"  # or "quantile"
     # Bump this whenever the cache payload format changes (independent of
     # dataset-specific preprocess_version) to invalidate all existing caches.
     _CACHE_FORMAT_VERSION: str = "fmt2"
@@ -100,7 +101,15 @@ class SNAPTemporalLoader(ABC):
         """Heavy lifting: parse, remap, bin, compute features + S per snapshot."""
         df = self.parse(raw_path)
         df, num_nodes = _remap_to_dense_ids(df)
-        bins = _snapshot_bin_edges(df.ts, num_time_steps)
+        if self.binning_strategy == "quantile":
+            bins = _quantile_bin_edges(df.ts, num_time_steps)
+        elif self.binning_strategy == "equal_time":
+            bins = _snapshot_bin_edges(df.ts, num_time_steps)
+        else:
+            raise ValueError(
+                f"Unknown binning_strategy={self.binning_strategy!r} "
+                f"for {self.dataset_name}. Use 'equal_time' or 'quantile'."
+            )
 
         features_list: list[torch.Tensor] = []
         edge_index_list: list[torch.Tensor] = []
@@ -151,3 +160,28 @@ def _remap_to_dense_ids(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 def _snapshot_bin_edges(ts: pd.Series, num_time_steps: int) -> np.ndarray:
     t_min, t_max = float(ts.min()), float(ts.max())
     return np.linspace(t_min, t_max + 1e-6, num_time_steps + 1)
+
+
+def _quantile_bin_edges(ts: pd.Series, num_time_steps: int) -> np.ndarray:
+    """Bin edges by event-count quantiles.
+
+    Each bin contains approximately equal number of events (rows in `ts`).
+    Useful for bursty datasets like EUT where equal-time bins produce
+    many empty snapshots.
+
+    Returns an array of length num_time_steps + 1 with strictly increasing
+    edges. Edge cases:
+        - Duplicate quantiles (when many events share a timestamp) are
+          deduplicated and adjusted with small epsilons so we still get
+          num_time_steps non-empty bins.
+        - The final edge is bumped by 1e-6 to make the last bin inclusive
+          of t_max (same convention as _snapshot_bin_edges).
+    """
+    quantiles = np.linspace(0, 1, num_time_steps + 1)
+    bins = ts.quantile(quantiles).values.astype(float)
+    # Bump duplicates monotonically so all bins are non-empty
+    for i in range(1, len(bins)):
+        if bins[i] <= bins[i - 1]:
+            bins[i] = bins[i - 1] + 1e-6
+    bins[-1] = max(bins[-1], float(ts.max()) + 1e-6)
+    return bins

@@ -75,3 +75,45 @@ def test_loader_base_beta_recomputes_S_hat_from_cached_S(tmp_path: Path):
     g_high = loader.build(raw_path, cache_dir, num_time_steps=1, beta=0.9)
     # Same A, same S, different β → different S_hat
     assert not torch.allclose(g_low.snapshots[0].S_hat, g_high.snapshots[0].S_hat)
+
+
+class _QuantileDummyLoader(SNAPTemporalLoader):
+    dataset_name = "quantile_dummy"
+    preprocess_version = "v1"
+    binning_strategy = "quantile"
+
+    def parse(self, path: Path) -> pd.DataFrame:
+        with gzip.open(path, "rt") as f:
+            return pd.read_csv(f, sep=r"\s+", header=None, names=["src", "dst", "ts"])
+
+
+def test_quantile_binning_produces_no_empty_bins(tmp_path: Path):
+    """A bursty timeline that would have empty equal-time bins must have
+    non-empty bins under quantile strategy.
+
+    The data has 30 events clustered in ts=[0..29] and 30 events clustered
+    in ts=[970..999]. Equal-time bins with T=6 over [0..999] give bins of
+    width ~167, so the middle 4 bins are empty. Quantile binning puts ~10
+    events per bin so every bin is non-empty.
+    """
+    rows = []
+    # 30 events in the first ~3% of the time range
+    for i in range(30):
+        rows.append(f"{i % 5} {(i + 1) % 5} {i}")
+    # 30 events in the last ~3% of the time range
+    for i in range(30):
+        rows.append(f"{i % 5} {(i + 1) % 5} {970 + i}")
+    raw = "\n".join(rows)
+    raw_path = tmp_path / "raw.txt.gz"
+    with gzip.open(raw_path, "wt") as f:
+        f.write(raw)
+
+    g = _QuantileDummyLoader().build(
+        raw_path=raw_path,
+        cache_dir=tmp_path / "cache",
+        num_time_steps=6,
+        beta=0.8,
+    )
+    # With quantile binning, every snapshot must be non-empty.
+    empty = [t for t, s in enumerate(g.snapshots) if s.edge_index.shape[1] == 0]
+    assert empty == [], f"quantile binning still produced empty snapshots at {empty}"

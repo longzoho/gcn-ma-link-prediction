@@ -9,7 +9,8 @@ from src.data.loaders._base import SNAPTemporalLoader
 
 class EUTLoader(SNAPTemporalLoader):
     dataset_name = "eut"
-    preprocess_version = "v1"
+    preprocess_version = "v2"
+    binning_strategy = "quantile"
 
     def parse(self, path: Path) -> pd.DataFrame:
         with gzip.open(path, "rt") as f:
