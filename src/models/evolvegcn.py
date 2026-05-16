@@ -4,6 +4,20 @@ Wraps the upstream EGCN class (in `third_party/EvolveGCN/egcn_o.py`) as a
 DynamicLinkPredictor. Replaces the one-hot identity feature convention
 (spec §6.6) with a learnable nn.Embedding to keep RAM tractable on
 large datasets.
+
+Upstream bug-fix note
+---------------------
+The upstream EGCN.__init__ does ``self._parameters = nn.ParameterList()``,
+overwriting the plain ``dict`` that nn.Module expects in ``_parameters``.
+This breaks ``module.to(device)`` / ``module._apply()`` (which iterates
+``self._parameters.items()``).  After constructing the upstream object we
+patch it:
+
+1. Convert ``GRCU_layers`` (plain Python list) → ``nn.ModuleList`` so
+   PyTorch can traverse child modules and apply ``.to(device)`` / gradient
+   collection normally.
+2. Restore ``_parameters`` to an empty ``dict`` (the ModuleList handles
+   parameter registration automatically through the child modules).
 """
 import sys
 from pathlib import Path
@@ -22,6 +36,33 @@ import utils as upstream_utils  # noqa: E402 — provides Namespace
 
 from src.models.base import DynamicLinkPredictor
 from src.models.gcn_ma.link_decoder import LinkDecoderMLP
+
+
+def _patch_upstream_egcn(core: UpstreamEGCN_O) -> None:
+    """Fix two upstream bugs that break standard nn.Module machinery.
+
+    Bug 1: GRCU_layers is a plain Python list — not traversed by .to() or
+    parameter collection.  Fix: replace with nn.ModuleList, registered via
+    core._modules so PyTorch can traverse it.
+
+    Bug 2: __init__ sets self._parameters = nn.ParameterList(), overwriting
+    the dict that Module._apply() expects.  Fix: restore to {}.  The GRCU
+    modules are now properly registered via the ModuleList, so the dict can
+    stay empty.
+
+    Note: we use object.__setattr__ / direct _modules assignment to bypass
+    nn.Module's __setattr__ guards (add_module raises KeyError if the
+    attribute already exists as a non-module attribute).
+    """
+    # Upgrade plain list → proper ModuleList (registers child modules)
+    layers = core.GRCU_layers  # still the original Python list at this point
+    module_list = nn.ModuleList(layers)
+    # Bypass __setattr__ then register in the _modules dict directly
+    object.__setattr__(core, "GRCU_layers", module_list)
+    core._modules["GRCU_layers"] = module_list
+
+    # Restore _parameters to an ordinary empty dict
+    object.__setattr__(core, "_parameters", {})
 
 
 class EvolveGCN_O(DynamicLinkPredictor):
@@ -66,11 +107,13 @@ class EvolveGCN_O(DynamicLinkPredictor):
                 "layer_2_feats": hidden_dim,
             }
         )
-        self.core = UpstreamEGCN_O(
+        core = UpstreamEGCN_O(
             args=upstream_args,
             activation=nn.RReLU(),
             device=torch.device("cpu"),
         )
+        _patch_upstream_egcn(core)
+        self.core = core
 
         # Shared MLP decoder pattern with GCN_MA
         self.decoder = LinkDecoderMLP(

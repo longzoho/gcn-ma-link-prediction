@@ -1,0 +1,12 @@
+name: evolvegcn_o
+feat_dim: 32
+hidden_dim: 32
+num_layers: 2
+activation: rrelu
+dropout: 0.1
+lr: 1.0e-3
+weight_decay: 1.0e-5
+optimizer: adam
+epochs: 3
+early_stop_patience: 20
+grad_clip_max_norm: 5.0
