@@ -1,11 +1,14 @@
 """Disk cache for preprocessed dynamic-graph artifacts.
 
-Cached payload schema (a dict):
-    features: list[torch.Tensor]    # len T, each [N, 3]
-    S:        list[torch.Tensor]    # len T, each [N, N] (β-independent)
-    num_nodes: int
+Cached payload schema (a dict, fmt2+):
+    features:       list[torch.Tensor]  # len T, each [N, 3] = [deg, CC, AS]
+    edge_index:     list[torch.Tensor]  # len T, each [2, E_t]
+    num_nodes:      int
     num_time_steps: int
-    edge_index: list[torch.Tensor]  # len T, each [2, E_t]
+
+S is NOT cached. It is recomputed cheaply in SNAPTemporalLoader.build() via
+A @ A for each snapshot (~50ms per snapshot on CPU), keeping cache 100-1000x
+smaller than storing the dense [N, N] matrices directly.
 """
 import hashlib
 from pathlib import Path

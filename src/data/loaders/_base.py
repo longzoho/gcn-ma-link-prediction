@@ -20,7 +20,6 @@ from src.data.preprocess import (
     aggregation_strength,
     clustering_coefficient,
     enhanced_adjacency,
-    pairwise_aggregation,
 )
 
 
@@ -30,6 +29,9 @@ class SNAPTemporalLoader(ABC):
 
     dataset_name: str = "unknown"
     preprocess_version: str = "v1"
+    # Bump this whenever the cache payload format changes (independent of
+    # dataset-specific preprocess_version) to invalidate all existing caches.
+    _CACHE_FORMAT_VERSION: str = "fmt2"
 
     @abstractmethod
     def parse(self, path: Path) -> pd.DataFrame:
@@ -55,7 +57,8 @@ class SNAPTemporalLoader(ABC):
                 cached = load_processed(cache_path)
 
         if cached is None:
-            cache_key = cache_key_for_file(raw_path, self.preprocess_version)
+            version = f"{self.preprocess_version}-{self._CACHE_FORMAT_VERSION}"
+            cache_key = cache_key_for_file(raw_path, version=version)
             cache_path = cache_dir / f"{self.dataset_name}_T{num_time_steps}_{cache_key}.pt"
             cached = load_processed(cache_path)
 
@@ -63,19 +66,25 @@ class SNAPTemporalLoader(ABC):
             cached = self._preprocess(raw_path, num_time_steps)
             save_processed(cached, cache_path)
 
-        # Compose S_hat = A + β·S + I at load time (β-dependent, not cached)
+        # Recompute S from cached edge_index + features (AS = features[:, 2]),
+        # then compose S_hat = A + β·S + I (β-dependent, not cached).
         snapshots: list[Data] = []
         N = cached["num_nodes"]
         for t in range(cached["num_time_steps"]):
             edge_index = cached["edge_index"][t]
+            features = cached["features"][t]
             A = torch.zeros(N, N)
             if edge_index.numel() > 0:
                 A[edge_index[0], edge_index[1]] = 1.0
                 A[edge_index[1], edge_index[0]] = 1.0
-            S_hat = enhanced_adjacency(A, cached["S"][t], beta=beta)
+            common = A @ A
+            common.fill_diagonal_(0.0)
+            as_col = features[:, 2]  # AS is column 2 of features
+            S = common * as_col.unsqueeze(1)
+            S_hat = enhanced_adjacency(A, S, beta=beta)
 
             data = Data(edge_index=edge_index, num_nodes=N)
-            data.x = cached["features"][t]
+            data.x = features
             data.S_hat = S_hat
             snapshots.append(data)
 
@@ -94,7 +103,6 @@ class SNAPTemporalLoader(ABC):
         bins = _snapshot_bin_edges(df.ts, num_time_steps)
 
         features_list: list[torch.Tensor] = []
-        S_list: list[torch.Tensor] = []
         edge_index_list: list[torch.Tensor] = []
 
         for t in range(num_time_steps):
@@ -112,7 +120,8 @@ class SNAPTemporalLoader(ABC):
             for i, d in G.degree():
                 deg[i] = d
             features = torch.stack([deg, cc, as_], dim=1)
-            S = pairwise_aggregation(G, as_, num_nodes)
+            # S is NOT cached — recomputed cheaply from edge_index + features
+            # in build() via A@A. Saves 100-1000x cache size for large datasets.
 
             if len(edges_list) == 0:
                 edge_index = torch.empty(2, 0, dtype=torch.long)
@@ -120,12 +129,10 @@ class SNAPTemporalLoader(ABC):
                 edge_index = torch.tensor(edges_list, dtype=torch.long).t().contiguous()
 
             features_list.append(features)
-            S_list.append(S)
             edge_index_list.append(edge_index)
 
         return {
             "features": features_list,
-            "S": S_list,
             "edge_index": edge_index_list,
             "num_nodes": num_nodes,
             "num_time_steps": num_time_steps,
