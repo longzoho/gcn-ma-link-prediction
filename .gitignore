@@ -24,10 +24,13 @@ results/checkpoints/
 results/logs/
 results/plots/
 results/tb/
-results/metrics.jsonl
-results/report/
+results/tb/
+results/configs_runtime/
+results/metrics_smoke.jsonl
 *.pt
 *.pth
+
+# Track metrics.jsonl, summary tables, and the metrics_plan1 archive — they ARE the deliverables.
 
 # Misc
 .DS_Store

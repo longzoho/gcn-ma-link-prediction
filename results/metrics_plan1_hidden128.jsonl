@@ -1,0 +1,1 @@
+{"date": "2026-05-16T06:09:23.029087+00:00", "experiment_name": "gcn_ma_collegemsg", "model": "gcn_ma", "dataset": "collegemsg", "seed": 42, "auc": 0.9024113443058502, "ap": 0.9200537548723843, "val_auc": 0.9530428249436514, "val_ap": 0.9554842204958318, "best_epoch": 4, "runtime_s": 61.342896938323975, "config_hash": "1bfa516f8872", "git_sha": "554f3bb"}
