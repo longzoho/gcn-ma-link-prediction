@@ -79,3 +79,34 @@ def test_attention_preserves_shape():
 def test_attention_embed_dim_divisible_by_heads_validated():
     with pytest.raises(ValueError):
         MultiHeadSelfAttention(embed_dim=10, num_heads=3, dropout=0.0)
+
+
+from src.models.gcn_ma.link_decoder import LinkDecoderMLP
+
+
+def test_link_decoder_output_shape():
+    N, D, E = 10, 16, 7
+    Z = torch.randn(N, D)
+    edges = torch.randint(0, N, (2, E))
+    decoder = LinkDecoderMLP(embed_dim=D, hidden_dim=D, dropout=0.0)
+    logits = decoder(Z, edges)
+    assert logits.shape == (E,)
+
+
+def test_link_decoder_logit_not_probability():
+    """Decoder returns raw logits, NOT sigmoid (we use BCEWithLogitsLoss)."""
+    Z = torch.randn(5, 4)
+    edges = torch.tensor([[0, 1], [2, 3]])
+    decoder = LinkDecoderMLP(embed_dim=4, hidden_dim=4, dropout=0.0)
+    logits = decoder(Z, edges)
+    # If output were already sigmoid'd we'd expect all to be in [0,1].
+    # A 2-layer MLP with random init can produce values outside this range.
+    # Statistically over 100 calls at least one should be outside [0,1].
+    found_outside = False
+    for _ in range(100):
+        decoder = LinkDecoderMLP(embed_dim=4, hidden_dim=4, dropout=0.0)
+        out = decoder(Z, edges)
+        if (out < 0).any() or (out > 1).any():
+            found_outside = True
+            break
+    assert found_outside, "decoder appears to apply sigmoid internally"
