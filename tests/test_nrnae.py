@@ -98,3 +98,27 @@ def test_enhanced_adjacency_includes_identity():
     torch.testing.assert_close(torch.diag(S_hat), expected_diag)
     # Off-diagonal at (0,1): A=1, S=2, beta=0.8 → 1 + 0.8*2 = 2.6
     torch.testing.assert_close(S_hat[0, 1], torch.tensor(2.6))
+
+
+from src.data.preprocess import compute_snapshot_features
+
+
+def test_compute_snapshot_features_returns_3dim_node_features_and_S_hat():
+    """compute_snapshot_features(edges, num_nodes, beta) →
+       node_features [N, 3] = [degree, CC, AS], S_hat [N, N] sparse-friendly dense.
+    """
+    edges = [(0, 1), (0, 2), (1, 2), (2, 3), (3, 4)]
+    features, S_hat = compute_snapshot_features(edges, num_nodes=5, beta=0.8)
+    assert features.shape == (5, 3)
+    # node 2: degree=3, CC=1/3, AS=1
+    torch.testing.assert_close(features[2, 0], torch.tensor(3.0))
+    torch.testing.assert_close(features[2, 1], torch.tensor(1.0 / 3.0))
+    torch.testing.assert_close(features[2, 2], torch.tensor(1.0))
+    assert S_hat.shape == (5, 5)
+
+
+def test_compute_snapshot_features_empty_edges():
+    """Snapshot with no edges → all zero features, S_hat = I."""
+    features, S_hat = compute_snapshot_features([], num_nodes=5, beta=0.8)
+    torch.testing.assert_close(features, torch.zeros(5, 3))
+    torch.testing.assert_close(S_hat, torch.eye(5))

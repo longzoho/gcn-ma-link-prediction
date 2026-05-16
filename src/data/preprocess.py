@@ -52,3 +52,41 @@ def enhanced_adjacency(A: torch.Tensor, S: torch.Tensor, beta: float) -> torch.T
     """Compute Ŝ = A + β·S + I per paper Eq. 5."""
     n = A.shape[0]
     return A + beta * S + torch.eye(n, dtype=A.dtype, device=A.device)
+
+
+def compute_snapshot_features(
+    edges: list[tuple[int, int]],
+    num_nodes: int,
+    beta: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-snapshot node features [N, 3] = [degree, CC, AS] and Ŝ [N, N].
+
+    Args:
+        edges: undirected edge list. Duplicates and self-loops are ignored.
+        num_nodes: total nodes in the network (constant across snapshots).
+        beta: NRNAE mixing factor.
+
+    Returns:
+        features: torch.Tensor [N, 3]
+        S_hat: torch.Tensor [N, N], dense
+    """
+    G = nx.Graph()
+    G.add_nodes_from(range(num_nodes))
+    G.add_edges_from((u, v) for u, v in edges if u != v)
+
+    cc = clustering_coefficient(G, num_nodes)
+    as_ = aggregation_strength(G, cc, num_nodes)
+
+    deg = torch.zeros(num_nodes)
+    for i, d in G.degree():
+        deg[i] = d
+
+    features = torch.stack([deg, cc, as_], dim=1)
+
+    A = torch.zeros(num_nodes, num_nodes)
+    for u, v in G.edges():
+        A[u, v] = 1.0
+        A[v, u] = 1.0
+    S = pairwise_aggregation(G, as_, num_nodes)
+    S_hat = enhanced_adjacency(A, S, beta)
+    return features, S_hat
