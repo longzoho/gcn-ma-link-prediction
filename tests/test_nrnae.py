@@ -1,7 +1,7 @@
 import networkx as nx
 import torch
 
-from src.data.preprocess import aggregation_strength, clustering_coefficient
+from src.data.preprocess import aggregation_strength, clustering_coefficient, enhanced_adjacency, pairwise_aggregation
 
 
 def _triangle_plus_tail():
@@ -54,3 +54,47 @@ def test_handles_isolated_node():
     cc = clustering_coefficient(G, num_nodes=2)
     assert cc.shape == (2,)
     torch.testing.assert_close(cc, torch.zeros(2))
+
+
+def test_pairwise_aggregation_shape_and_values():
+    """For the triangle-plus-tail graph:
+    N(0)={1,2}, N(1)={0,2}, N(2)={0,1,3}, N(3)={2,4}, N(4)={3}
+    |N(0) ∩ N(1)| = |{2}| = 1
+    |N(0) ∩ N(2)| = |{1}| = 1
+    |N(1) ∩ N(2)| = |{0}| = 1
+    |N(2) ∩ N(3)| = |{}| = 0
+    S(i,j) = |N(i)∩N(j)| * AS(i)
+        S(0,1) = 1 * 2 = 2
+        S(0,2) = 1 * 2 = 2
+        S(1,0) = 1 * 2 = 2
+        S(1,2) = 1 * 2 = 2
+        S(2,0) = 1 * 1 = 1
+        S(2,1) = 1 * 1 = 1
+    """
+    G = _triangle_plus_tail()
+    cc = clustering_coefficient(G, num_nodes=5)
+    as_ = aggregation_strength(G, cc, num_nodes=5)
+    S = pairwise_aggregation(G, as_, num_nodes=5)
+    assert S.shape == (5, 5)
+    assert S[0, 1].item() == 2.0
+    assert S[1, 0].item() == 2.0
+    assert S[2, 0].item() == 1.0
+    assert S[0, 0].item() == 0.0  # no self
+    assert S[2, 3].item() == 0.0  # no common neighbor
+
+
+def test_enhanced_adjacency_includes_identity():
+    """Ŝ = A + β·S + I."""
+    G = _triangle_plus_tail()
+    cc = clustering_coefficient(G, num_nodes=5)
+    as_ = aggregation_strength(G, cc, num_nodes=5)
+    S = pairwise_aggregation(G, as_, num_nodes=5)
+    A = torch.zeros(5, 5)
+    for u, v in G.edges():
+        A[u, v] = 1.0
+        A[v, u] = 1.0
+    S_hat = enhanced_adjacency(A, S, beta=0.8)
+    expected_diag = torch.ones(5)  # identity contribution
+    torch.testing.assert_close(torch.diag(S_hat), expected_diag)
+    # Off-diagonal at (0,1): A=1, S=2, beta=0.8 → 1 + 0.8*2 = 2.6
+    torch.testing.assert_close(S_hat[0, 1], torch.tensor(2.6))
