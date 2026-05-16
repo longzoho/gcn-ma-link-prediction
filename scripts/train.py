@@ -19,13 +19,28 @@ if str(REPO_ROOT) not in sys.path:
 import torch
 import yaml
 
-from src.data.loaders.collegemsg import build_dynamic_graph
+from src.data.loaders._base import SNAPTemporalLoader
+from src.data.loaders.bitcoinotc import BitcoinotcLoader
+from src.data.loaders.collegemsg import CollegeMsgLoader
+from src.data.loaders.eut import EUTLoader
+from src.data.loaders.lastfm import LastFMLoader
+from src.data.loaders.mooc_actions import MoocActionsLoader
+from src.data.loaders.wikipedia import WikipediaLoader
 from src.eval.evaluator import evaluate_dynamic
 from src.models.gcn_ma.model import GCN_MA
 from src.training.negative_sampling import sample_negative_edges
 from src.training.trainer import TrainConfig, train_dynamic
 from src.utils.logging import append_metrics
 from src.utils.seed import set_seed
+
+LOADERS: dict[str, type[SNAPTemporalLoader]] = {
+    "collegemsg": CollegeMsgLoader,
+    "bitcoinotc": BitcoinotcLoader,
+    "eut": EUTLoader,
+    "mooc_actions": MoocActionsLoader,
+    "lastfm": LastFMLoader,
+    "wikipedia": WikipediaLoader,
+}
 
 
 def _load_yaml(path: Path) -> dict:
@@ -86,8 +101,13 @@ def main() -> None:
         raise FileNotFoundError(
             f"Run: python scripts/download_datasets.py --dataset {ds_cfg['name']}"
         )
-    graph = build_dynamic_graph(
-        raw_path,
+    loader_cls = LOADERS.get(ds_cfg["name"])
+    if loader_cls is None:
+        raise ValueError(f"Unknown dataset: {ds_cfg['name']}. Known: {list(LOADERS)}")
+    cache_dir = REPO_ROOT / "data" / "processed" / ds_cfg["name"]
+    graph = loader_cls().build(
+        raw_path=raw_path,
+        cache_dir=cache_dir,
         num_time_steps=ds_cfg["num_time_steps"],
         beta=ds_cfg["beta"],
     )
