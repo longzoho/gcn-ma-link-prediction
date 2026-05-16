@@ -1,0 +1,6 @@
+name: mooc_actions
+raw_url: http://snap.stanford.edu/jodie/mooc.csv
+raw_filename: mooc.csv
+num_time_steps: 72
+beta: 0.8
+train_ratio: 0.8
