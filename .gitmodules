@@ -1,0 +1,3 @@
+[submodule "third_party/EvolveGCN"]
+	path = third_party/EvolveGCN
+	url = https://github.com/IBM/EvolveGCN
