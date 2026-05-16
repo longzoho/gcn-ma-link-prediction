@@ -27,7 +27,6 @@ from src.data.loaders.lastfm import LastFMLoader
 from src.data.loaders.mooc_actions import MoocActionsLoader
 from src.data.loaders.wikipedia import WikipediaLoader
 from src.eval.evaluator import evaluate_dynamic
-from src.models.gcn_ma.model import GCN_MA
 from src.training.negative_sampling import sample_negative_edges
 from src.training.trainer import TrainConfig, train_dynamic
 from src.utils.logging import append_metrics
@@ -82,6 +81,29 @@ def _build_test_pairs(graph, test_start: int, seed: int):
     return test_pairs
 
 
+def _build_model(model_cfg: dict, graph):
+    """Construct a DynamicLinkPredictor by model name."""
+    name = model_cfg["name"]
+    if name == "gcn_ma":
+        from src.models.gcn_ma.model import GCN_MA
+        return GCN_MA(
+            feat_dim=model_cfg["feat_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            num_heads=model_cfg["num_heads"],
+            dropout=model_cfg["dropout"],
+        )
+    elif name == "evolvegcn_o":
+        from src.models.evolvegcn import EvolveGCN_O
+        return EvolveGCN_O(
+            num_nodes=graph.num_nodes,
+            feat_dim=model_cfg["feat_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            num_layers=model_cfg["num_layers"],
+            dropout=model_cfg["dropout"],
+        )
+    raise ValueError(f"Unknown model name: {name!r}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, type=Path)
@@ -113,12 +135,7 @@ def main() -> None:
     )
 
     # Model
-    model = GCN_MA(
-        feat_dim=model_cfg["feat_dim"],
-        hidden_dim=model_cfg["hidden_dim"],
-        num_heads=model_cfg["num_heads"],
-        dropout=model_cfg["dropout"],
-    )
+    model = _build_model(model_cfg, graph)
 
     # Train
     train_cfg = TrainConfig(
@@ -150,7 +167,7 @@ def main() -> None:
     record = {
         "date": datetime.now(timezone.utc).isoformat(),
         "experiment_name": exp["experiment_name"],
-        "model": "gcn_ma",
+        "model": model_cfg["name"],
         "dataset": ds_cfg["name"],
         "seed": exp["seed"],
         "auc": test_metrics["auc"],
