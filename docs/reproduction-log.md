@@ -140,3 +140,74 @@ Best (β=0.8, hidden_dim=64, num_heads=4) applied to all datasets. Test AUC/AP p
 - Bipartite node-count discrepancy vs paper: our LastFM has 1980 nodes (980 users + 1000 items) but paper reports 1000. Likely a "users only" convention in the paper; document in thesis.
 - LastFM AUC of 0.80 vs paper's 0.876 is the biggest gap. Worth a focused investigation in Plan 3 — maybe an ablation isolating the cause.
 - Test pair caching (seed=999) currently happens on every CLI run. For Plan 3 baselines, cache `test_pairs.pt` so all models evaluate on the exact same pairs.
+
+---
+
+## Plan 3a: EvolveGCN-O baseline integration
+
+### Approach
+
+Vendored [`IBM/EvolveGCN`](https://github.com/IBM/EvolveGCN) as a git submodule at pinned commit `9086906` (see `.gitmodules`). Wrote a thin adapter `src/models/evolvegcn.py` (~165 LOC) extending `DynamicLinkPredictor`. Reuses Plan 1/2 trainer, evaluator, negative sampling, loaders.
+
+### Hyperparameter policy (Hybrid)
+
+Shared with GCN_MA: `lr=1e-3`, `weight_decay=1e-5`, Adam, `epochs=200`, patience 20, `dropout=0.1`, `grad_clip_max_norm=5.0`, `hidden_dim=64`.
+EvolveGCN-specific: `num_layers=2` (upstream hardcoded), `activation=RReLU`, `feat_dim=64` (learnable embedding instead of one-hot identity).
+
+### Deviation from spec §6.6
+
+Spec called for one-hot identity `I_N` as baseline input feature, but RAM cost is prohibitive for Bitcoinotc / Mooc / Wikipedia (34-59 GB). Replaced with `nn.Embedding(N, feat_dim)` Xavier-initialized — same convention as IBM/EvolveGCN's own code for large-N cases.
+
+### Upstream EGCN bugs patched (PyTorch 2.4 compat)
+
+The upstream `EGCN.__init__` had two issues that broke standard `nn.Module` machinery under PyTorch 2.4:
+
+1. `self._parameters` was overwritten with `nn.ParameterList`, breaking `Module._apply()` / `.to(device)`.
+2. `GRCU_layers` was stored as a plain Python list, invisible to parameter traversal.
+
+`_patch_upstream_egcn()` in `src/models/evolvegcn.py` fixes both by promoting `GRCU_layers` to `nn.ModuleList` and restoring `_parameters` to `{}`. 0 changes made to upstream code.
+
+### Results — 3 of 6 datasets
+
+EvolveGCN-O reproduced successfully on CollegeMsg, Bitcoinotc, EUT:
+
+| Dataset      | GCN_MA AUC      | EvolveGCN-O AUC | Δ (GCN_MA − EvolveGCN-O) |
+|--------------|-----------------|------------------|--------------------------|
+| collegemsg   | 0.9005 ± 0.0002 | 0.8259 ± 0.0010  | **+0.075** ⭐ |
+| bitcoinotc   | 0.8560 ± 0.0054 | 0.8139 ± 0.0204  | **+0.042** ⭐ |
+| eut          | 0.9008 ± 0.0016 | 0.8620 ± 0.0017  | **+0.039** ⭐ |
+
+GCN_MA wins on all 3 datasets — expected direction (paper's contribution: NRNAE + attention beats vanilla EvolveGCN).
+
+### Known limitation: bipartite datasets
+
+EvolveGCN-O produced **`Z = all zeros`** on the 3 bipartite datasets (LastFM, Mooc-actions, Wikipedia), yielding val_auc = 0.5000 every epoch and best_epoch = 0. Root cause investigation (see `results/logs/evolvegcn_o_lastfm_seed42_*.log` and ad-hoc diagnostics):
+
+- Upstream EGCN forward returns zero output even at single-snapshot input (`time_step=0`).
+- Gradient norms are exactly 0 on all `core` parameters and on `node_emb`. Only `decoder.bias` gets gradient — model can't distinguish positive from negative pairs because Z is constant.
+- For comparable non-bipartite N (CollegeMsg N=1899 vs LastFM N=1980), CollegeMsg produces non-zero Z starting at `time_step=1`.
+- Conjecture: upstream's directed sparse adjacency + Xavier-init scaling + bipartite block-diagonal structure (`A^T A` is block-diagonal) cause RReLU to saturate to zero. Items have zero in-degree in our adjacency construction, so their rows in `A @ X @ W` are exactly zero.
+
+**Stale entries removed** from `results/metrics.jsonl` (9 records: lastfm, mooc_actions, wikipedia × 3 seeds). Cross-model table shows `—` for these.
+
+**Fix candidates** (not pursued in Plan 3a, deferred to follow-up):
+- Symmetrize adjacency: `A = A + A^T` so item rows have signal too.
+- Larger node embedding init (e.g., `nn.init.uniform_(-1, 1)` instead of Xavier).
+- Truncated window (process only last K snapshots).
+- Use NRNAE features as input (departs from "baselines vanilla" but enables apples-to-apples comparison).
+
+### Final 27 metric records
+
+15 GCN_MA (Plan 2) + 9 EvolveGCN-O (Plan 3a partial success) = 27 in `results/metrics.jsonl`. Plan 1 archive (1 record at hidden_dim=128) remains in `results/metrics_plan1_hidden128.jsonl`.
+
+Wait — actually 18 GCN_MA from Plan 2. Let me recount:
+- 18 GCN_MA (6 datasets × 3 seeds, Plan 2)
+- 9 EvolveGCN-O (3 working datasets × 3 seeds, Plan 3a)
+- **27 total** ✓
+
+### Carry-forwards to Plans 3b/c/d
+
+- `_build_model` dispatch in `scripts/train.py` is extensible — same pattern for HTGN, DyGNN, DGCN.
+- `aggregate_results.py --models` works for arbitrary model lists.
+- Bipartite failure for EvolveGCN should be investigated before reporting Plan 4 final numbers — fix or document properly.
+- The `_patch_upstream_egcn()` PyTorch 2.4 shim approach may be needed for other 2019-2020 upstream baselines.
