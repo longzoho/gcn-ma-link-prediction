@@ -1,0 +1,6 @@
+name: eut
+raw_url: https://snap.stanford.edu/data/email-Eu-core-temporal.txt.gz
+raw_filename: email-Eu-core-temporal.txt.gz
+num_time_steps: 127
+beta: 0.8
+train_ratio: 0.8
