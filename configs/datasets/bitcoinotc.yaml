@@ -1,0 +1,6 @@
+name: bitcoinotc
+raw_url: https://snap.stanford.edu/data/soc-sign-bitcoinotc.csv.gz
+raw_filename: soc-sign-bitcoinotc.csv.gz
+num_time_steps: 62
+beta: 0.8
+train_ratio: 0.8

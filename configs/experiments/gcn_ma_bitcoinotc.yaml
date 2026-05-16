@@ -1,0 +1,7 @@
+experiment_name: gcn_ma_bitcoinotc
+seed: 42
+dataset_config: configs/datasets/bitcoinotc.yaml
+model_config: configs/models/gcn_ma.yaml
+device: cuda
+checkpoint_dir: results/checkpoints
+metrics_path: results/metrics.jsonl
