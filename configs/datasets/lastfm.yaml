@@ -1,0 +1,6 @@
+name: lastfm
+raw_url: http://snap.stanford.edu/jodie/lastfm.csv
+raw_filename: lastfm.csv
+num_time_steps: 76
+beta: 0.8
+train_ratio: 0.8
