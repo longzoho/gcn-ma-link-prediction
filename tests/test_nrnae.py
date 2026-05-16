@@ -122,3 +122,44 @@ def test_compute_snapshot_features_empty_edges():
     features, S_hat = compute_snapshot_features([], num_nodes=5, beta=0.8)
     torch.testing.assert_close(features, torch.zeros(5, 3))
     torch.testing.assert_close(S_hat, torch.eye(5))
+
+
+def test_pairwise_aggregation_vectorized_matches_python_loop():
+    """Vectorized rewrite must match the original closed-form values.
+
+    Graph: (0,1),(0,2),(1,2),(2,3),(3,4)
+    N(0)={1,2}, N(1)={0,2}, N(2)={0,1,3}, N(3)={2,4}, N(4)={3}
+    Common-neighbor counts (non-zero pairs):
+      |N(0)∩N(1)|=1  |N(0)∩N(2)|=1  |N(0)∩N(3)|=1  (node 2 shared with 3)
+      |N(1)∩N(2)|=1  |N(1)∩N(3)|=1                 (node 2 shared with 3)
+      |N(2)∩N(4)|=1                                 (node 3 shared with 4)
+    S(i,j) = |N(i)∩N(j)| * AS(i); AS = [2,2,1,0,0]
+      S[0,1]=2, S[0,2]=2, S[0,3]=2
+      S[1,0]=2, S[1,2]=2, S[1,3]=2
+      S[2,0]=1, S[2,1]=1, S[2,4]=1
+    """
+    G = _triangle_plus_tail()
+    cc = clustering_coefficient(G, num_nodes=5)
+    as_ = aggregation_strength(G, cc, num_nodes=5)
+    S = pairwise_aggregation(G, as_, num_nodes=5)
+    expected = torch.zeros(5, 5)
+    expected[0, 1] = 2.0; expected[0, 2] = 2.0; expected[0, 3] = 2.0
+    expected[1, 0] = 2.0; expected[1, 2] = 2.0; expected[1, 3] = 2.0
+    expected[2, 0] = 1.0; expected[2, 1] = 1.0; expected[2, 4] = 1.0
+    torch.testing.assert_close(S, expected)
+
+
+def test_pairwise_aggregation_larger_random_graph():
+    """Run on a 50-node Erdős–Rényi graph; verify properties hold."""
+    import networkx as nx
+    G = nx.erdos_renyi_graph(50, p=0.1, seed=42)
+    cc = clustering_coefficient(G, num_nodes=50)
+    as_ = aggregation_strength(G, cc, num_nodes=50)
+    S = pairwise_aggregation(G, as_, num_nodes=50)
+    assert S.shape == (50, 50)
+    # Diagonal must be zero
+    assert torch.diag(S).abs().sum().item() == 0.0
+    # S[i, j] should be 0 when AS[i] == 0
+    for i in range(50):
+        if as_[i].item() == 0.0:
+            assert S[i].abs().sum().item() == 0.0

@@ -33,18 +33,19 @@ def aggregation_strength(G: nx.Graph, cc: torch.Tensor, num_nodes: int) -> torch
 def pairwise_aggregation(G: nx.Graph, as_: torch.Tensor, num_nodes: int) -> torch.Tensor:
     """Compute S(i,j) = |N(i) ∩ N(j)| * AS(i) as a dense [N, N] tensor.
 
-    Diagonal is zero (no self-loop contribution).
+    Vectorized: builds adjacency A, computes common-neighbor count via A @ A,
+    then broadcasts AS along rows. Diagonal forced to zero.
+
+    Edge case: an empty graph (no edges) returns the zero matrix because A is
+    all-zero and the matmul yields zero.
     """
-    S = torch.zeros(num_nodes, num_nodes)
-    neighbors: dict[int, set[int]] = {n: set(G.neighbors(n)) for n in G.nodes()}
-    for i in G.nodes():
-        for j in G.nodes():
-            if i == j:
-                continue
-            common = neighbors.get(i, set()) & neighbors.get(j, set())
-            if not common:
-                continue
-            S[i, j] = len(common) * as_[i].item()
+    A = torch.zeros(num_nodes, num_nodes)
+    for u, v in G.edges():
+        A[u, v] = 1.0
+        A[v, u] = 1.0
+    common = A @ A                       # common[i,j] = |N(i) ∩ N(j)|
+    common.fill_diagonal_(0.0)           # no self contribution
+    S = common * as_.unsqueeze(1)        # broadcast AS along rows
     return S
 
 
