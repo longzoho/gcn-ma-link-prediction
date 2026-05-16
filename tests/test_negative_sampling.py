@@ -35,3 +35,11 @@ def test_different_seeds_differ():
     a = sample_negative_edges(pos, num_nodes=50, num_samples=20, seed=42)
     b = sample_negative_edges(pos, num_nodes=50, num_samples=20, seed=999)
     assert not torch.equal(a, b)
+
+
+def test_zero_samples_returns_empty_2d_tensor():
+    """When pos is empty and num_samples=0, return shape (2, 0) — not (0,)."""
+    pos = torch.empty(2, 0, dtype=torch.long)
+    neg = sample_negative_edges(pos, num_nodes=10, num_samples=0, seed=42)
+    assert neg.shape == (2, 0)
+    assert neg.dtype == torch.long

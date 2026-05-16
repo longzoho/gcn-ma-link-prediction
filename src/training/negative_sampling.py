@@ -22,6 +22,9 @@ def sample_negative_edges(
     Returns:
         neg_edges: [2, num_samples] long tensor.
     """
+    if num_samples == 0:
+        return torch.empty(2, 0, dtype=torch.long)
+
     generator = torch.Generator()
     if seed is not None:
         generator.manual_seed(seed)
@@ -53,4 +56,6 @@ def sample_negative_edges(
             f"(got {len(sampled)}). Graph too dense?"
         )
 
+    if not sampled:
+        return torch.empty(2, 0, dtype=torch.long)
     return torch.tensor(sampled, dtype=torch.long).t().contiguous()

@@ -47,13 +47,31 @@ def train_dynamic(
     optimizer = Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
     scheduler = ReduceLROnPlateau(optimizer, mode="max", patience=10, factor=0.5)
 
-    # Validation: predict snapshot val_step+1 (== train_end) given snapshots [0..val_step].
-    val_pos = graph.snapshots[val_step + 1].edge_index
+    # Validation: predict the first non-empty snapshot at or after val_step+1
+    # (== train_end). Some datasets (e.g. EUT) have empty time bins there.
+    val_target_t = val_step + 1
+    while (
+        val_target_t < graph.num_time_steps
+        and graph.snapshots[val_target_t].edge_index.shape[1] == 0
+    ):
+        val_target_t += 1
+    if val_target_t >= graph.num_time_steps:
+        raise RuntimeError(
+            f"No non-empty validation snapshot found in "
+            f"[{val_step + 1}, {graph.num_time_steps}) for early stop."
+        )
+    # The training loop still uses range(val_step) unchanged — no contamination.
+    # The evaluator drives the model forward through val_step_eval = val_target_t - 1
+    # (only at inference/no_grad), and looks up test_pairs[val_step_eval + 1] = val_target_t.
+    # Snapshots between val_step+1 and val_target_t-1 are empty, so feeding them to the
+    # model at inference time adds no real graph information.
+    val_step_eval = val_target_t - 1
+    val_pos = graph.snapshots[val_target_t].edge_index
     val_neg = sample_negative_edges(
         val_pos, num_nodes=graph.num_nodes,
         num_samples=val_pos.shape[1], seed=config.neg_sampling_seed_base + 99,
     )
-    val_pairs = {val_step + 1: {"pos": val_pos, "neg": val_neg}}
+    val_pairs = {val_target_t: {"pos": val_pos, "neg": val_neg}}
 
     history: list[dict] = []
     best_val_auc = -1.0
@@ -96,7 +114,7 @@ def train_dynamic(
 
         avg_loss = epoch_loss / max(n_steps, 1)
         val_metrics = evaluate_dynamic(
-            model, graph, time_steps=[val_step], test_pairs=val_pairs
+            model, graph, time_steps=[val_step_eval], test_pairs=val_pairs
         )
         history.append(
             {"epoch": epoch, "loss": avg_loss, **{f"val_{k}": v for k, v in val_metrics.items()}}
