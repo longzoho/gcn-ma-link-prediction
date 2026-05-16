@@ -1,0 +1,7 @@
+checkpoint_dir: results/checkpoints
+dataset_config: configs/datasets/lastfm.yaml
+device: cuda
+experiment_name: evolvegcn_o_lastfm_smoke
+metrics_path: results/metrics_smoke.jsonl
+model_config: configs/models/evolvegcn_o_smoke.yaml
+seed: 42

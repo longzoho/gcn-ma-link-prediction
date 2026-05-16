@@ -140,8 +140,15 @@ class EvolveGCN_O(DynamicLinkPredictor):
             if ei.numel() == 0:
                 # Empty snapshot — self-loops only so adjacency is well-defined
                 ei = torch.stack([node_ids, node_ids], dim=0)
-            vals = torch.ones(ei.shape[1], device=device)
-            A = torch.sparse_coo_tensor(ei, vals, (N, N)).coalesce()
+            # Symmetrize the adjacency: include both (u, v) and (v, u) entries.
+            # Without this, bipartite datasets (LastFM, Mooc, Wikipedia) collapse
+            # to Z=all-zeros after 2 GRCU layers: items have in-degree 0 in the
+            # directed view, so their rows in A @ X are zero, propagating zeros
+            # through the stack. Plan 3a diagnostic confirmed Z(t=0) was all
+            # zeros for bipartite datasets, working datasets had signal.
+            ei_sym = torch.cat([ei, ei.flip(0)], dim=1)
+            vals = torch.ones(ei_sym.shape[1], device=device)
+            A = torch.sparse_coo_tensor(ei_sym, vals, (N, N)).coalesce()
             A_list.append(A)
             Nodes_list.append(node_emb)
             mask_list.append(None)  # dead code in upstream — None is fine
