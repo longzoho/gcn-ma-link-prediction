@@ -11,11 +11,14 @@ class MoocActionsLoader(SNAPTemporalLoader):
     preprocess_version = "v1"
 
     def parse(self, path: Path) -> pd.DataFrame:
-        # JODIE format: header + user_id,item_id,timestamp,state_label,4 features
-        df = pd.read_csv(path)
-        df = df.rename(columns={"user_id": "src", "item_id": "dst", "timestamp": "ts"})
-        df = df[["src", "dst", "ts"]]
-        # Bipartite: shift item IDs to avoid overlap with user IDs.
+        # JODIE mooc.csv has a misaligned header (5 column names but 8 data columns).
+        # Skip the header row entirely and read only the first 3 positional columns
+        # which are always user_id, item_id, timestamp.
+        df = pd.read_csv(
+            path, header=0, usecols=[0, 1, 2],
+            names=["src", "dst", "ts"],
+        )
+        # Bipartite: shift item IDs to avoid overlap with user IDs after remap.
         max_user = df["src"].max()
         df["dst"] = df["dst"] + (max_user + 1)
         return df.astype({"src": int, "dst": int, "ts": int})
