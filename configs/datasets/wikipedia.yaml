@@ -1,0 +1,6 @@
+name: wikipedia
+raw_url: http://snap.stanford.edu/jodie/wikipedia.csv
+raw_filename: wikipedia.csv
+num_time_steps: 42
+beta: 0.8
+train_ratio: 0.8
