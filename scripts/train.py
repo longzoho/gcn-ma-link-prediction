@@ -108,6 +108,7 @@ def main() -> None:
         early_stop_patience=model_cfg["early_stop_patience"],
         grad_clip_max_norm=model_cfg["grad_clip_max_norm"],
         neg_sampling_seed_base=exp["seed"],
+        train_ratio=ds_cfg.get("train_ratio", 0.8),
     )
     ckpt = REPO_ROOT / exp["checkpoint_dir"] / f"{exp['experiment_name']}_seed{exp['seed']}_best.pt"
 
@@ -120,7 +121,7 @@ def main() -> None:
     model.to(device)
 
     from src.data.base import temporal_split
-    _, _, test_start = temporal_split(graph.num_time_steps, train_ratio=0.8)
+    _, _, test_start = temporal_split(graph.num_time_steps, train_ratio=ds_cfg.get("train_ratio", 0.8))
     test_pairs = _build_test_pairs(graph, test_start, seed=999)
     test_time_steps = [t - 1 for t in sorted(test_pairs.keys())]
     test_metrics = evaluate_dynamic(model, graph, test_time_steps, test_pairs)

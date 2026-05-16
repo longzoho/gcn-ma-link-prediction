@@ -22,6 +22,7 @@ class TrainConfig:
     early_stop_patience: int = 20
     grad_clip_max_norm: float = 5.0
     neg_sampling_seed_base: int = 0
+    train_ratio: float = 0.8
 
 
 def train_dynamic(
@@ -41,7 +42,7 @@ def train_dynamic(
             "history": list[dict] (per-epoch loss + val_auc),
         }
     """
-    train_end, val_step, _ = temporal_split(graph.num_time_steps, train_ratio=0.8)
+    train_end, val_step, _ = temporal_split(graph.num_time_steps, train_ratio=config.train_ratio)
     model.to(device)
     optimizer = Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
     scheduler = ReduceLROnPlateau(optimizer, mode="max", patience=10, factor=0.5)
