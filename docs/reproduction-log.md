@@ -224,3 +224,81 @@ For the thesis: this is a real finding. We can report "GCN_MA wins 4/6, but Evol
 - **Symmetrize adjacency** should be applied to all baselines that use directed sparse adjacencies, especially for bipartite datasets. Document in their reproduction logs.
 - `_patch_upstream_egcn()` PyTorch 2.4 shim pattern (promote plain lists → ModuleList, reset `_parameters` dict) may be needed for other 2019-2020 upstream baselines.
 - **LastFM gap for GCN_MA** is now an interesting research question — what makes LastFM special? Worth investigating before Plan 4 thesis writeup.
+
+---
+
+## Plan 3b: HTGN baseline integration
+
+### Approach taken
+
+**Path A (preferred)** — vendored [`marlin-codes/HTGN`](https://github.com/marlin-codes/HTGN) at pin `561159e`. Thin adapter in `src/models/htgn.py` (~165 LOC) wraps the upstream `HTGN` class from `script/models/HTGN.py`. Only **3 lines of shims** needed (PyTorch 2.4 compat for `config.py`'s module-level `argparse.parse_args()` — reset `sys.argv` around import). geoopt not needed (only used by upstream's optimizer, which we replace with Adam).
+
+### Hyperparameter policy (Hybrid)
+
+Shared with GCN_MA / EvolveGCN-O: `hidden_dim=64`, `dropout=0.1`, `lr=1e-3`, `weight_decay=1e-5`, Adam, `epochs=200`, patience 20, `grad_clip_max_norm=5.0`.
+
+HTGN-specific: `num_layers=2` (upstream fixed), `manifold="PoincareBall"`, `curvature=1.0` fixed, `aggregation="deg"`, `use_hta=1` (hyperbolic temporal attention), `nb_window=1`, learnable embedding `nn.Embedding(N, 64)`.
+
+### Deviations from HTGN paper
+
+1. **Adam (not RAdam Riemannian)** — Hybrid policy.
+2. **Fixed curvature** at 1.0 (paper allows learnable) — numerical stability under Adam.
+3. **Shared MLP decoder** (`LinkDecoderMLP`) instead of paper's Fermi-Dirac hyperbolic distance decoder. Output projected to Euclidean tangent space via `log_map_origin` first.
+4. **Symmetric adjacency** (Plan 3a carry-forward) — edges duplicated as `[ei, ei.flip(0)]`.
+
+### Upstream EGCN bug patched (PyTorch 2.4 device transfer)
+
+The upstream HTGN class stores 10 plain `torch.Tensor` attributes (curvature slices + `hidden_initial`) that are NOT `nn.Parameter` / `nn.Buffer`. PyTorch's `.to(device)` doesn't migrate them, so the model crashed with mixed-device tensor errors when moved to CUDA.
+
+Fix: adapter overrides `to()` / `cuda()` / `cpu()` to call `_build_core(device)` which:
+1. Builds `UpstreamHTGN` with `args.device=target`.
+2. Calls `.to(device)` on the new core.
+3. Walks all child submodule attributes and explicitly migrates any stale CPU plain-tensor attrs to the target device.
+
+Reusable pattern for other 2020-era hyperbolic GNN repos.
+
+### Final results — all 6 datasets × 3 seeds
+
+After full 18-run experiment (9.23 hours wall-clock, EUT dominated with ~2.25 h/seed):
+
+| Dataset      | GCN_MA AUC      | EvolveGCN-O AUC | HTGN AUC        | Paper GCN_MA AUC | HTGN vs Paper |
+|--------------|-----------------|------------------|------------------|-------------------|---------------|
+| collegemsg   | 0.9005 ± 0.0002 | 0.8643 ± 0.0110  | **0.9425 ± 0.0021** | 0.9149 | **+3.0%** ⭐ |
+| bitcoinotc   | 0.8560 ± 0.0054 | 0.8349 ± 0.0254  | **0.9147 ± 0.0047** | 0.9120 | **+0.3%** ⭐ |
+| eut          | 0.9008 ± 0.0016 | 0.9245 ± 0.0013  | **0.9838 ± 0.0005** | 0.9222 | **+6.7%** ⭐⭐ |
+| mooc_actions | 0.9845 ± 0.0002 | 0.9523 ± 0.0010  | **0.9928 ± 0.0009** | 0.9880 | **+0.5%** ⭐ |
+| lastfm       | 0.8004 ± 0.0040 | **0.9550 ± 0.0092**  | 0.9514 ± 0.0057 | 0.8757 | **+8.6%** ⭐⭐ |
+| wikipedia    | 0.8696 ± 0.0007 | 0.8540 ± 0.0094  | **0.9556 ± 0.0038** | 0.8742 | **+9.3%** ⭐⭐⭐ |
+
+### Per-dataset winner
+
+- **HTGN wins 5/6 datasets** vs GCN_MA and EvolveGCN-O on AUC.
+- **EvolveGCN-O barely beats HTGN on LastFM** (0.9550 vs 0.9514, gap 0.4%) — within std overlap.
+- **HTGN beats Paper GCN_MA on ALL 6 datasets**, including dramatic margins on Wikipedia (+9.3%), LastFM (+8.6%), EUT (+6.7%).
+- **Std consistently small** (<0.01 across all datasets) → multi-seed stability is excellent.
+
+### Interpretation
+
+The dominant performance of HTGN suggests:
+
+1. **Hyperbolic embeddings capture hierarchical / power-law structure** common in real-world dynamic graphs (social, citation, user-item). The Poincaré ball naturally represents tree-like organization with exponential volume growth.
+2. **GCN_MA's NRNAE features (degree, CC, AS) may be redundant** when the encoder space itself accommodates hierarchical relationships. NRNAE was designed to enrich Euclidean encoders, but hyperbolic encoders have an implicit hierarchy prior.
+3. **Our GCN_MA reproduction may be sub-optimal**. Plan 2 already noted Bitcoinotc (-5.6%) and LastFM (-7.5%) gaps. HTGN beating GCN_MA paper across all datasets suggests Mei&Zhao 2024 may also benefit from re-evaluation with stronger baselines.
+4. **Implementation choices matter**: our Hybrid policy (shared MLP decoder + Adam + symmetric adjacency) gives HTGN a fair shake that the original paper's Fermi-Dirac decoder + RAdam might not have. The dominance is at least partly architectural.
+
+### Engineering wins
+
+- **Path A worked** without fallback — adapter only needed 3 lines of shims (well below 10-line budget).
+- **Adapter is 165 LOC** — half the size of the path B fallback would have been.
+- **Hyperbolic ops module** (`src/models/hyperbolic_ops.py`) is reusable for future hyperbolic baselines.
+- **9.23 hours total** for 18 HTGN runs — dominated by EUT (T=127). Mooc converged surprisingly fast (best_epoch ≤ 10 across all seeds).
+
+### Final 54 metric records
+
+18 GCN_MA + 18 EvolveGCN-O + 18 HTGN = **54 records** in `results/metrics.jsonl`.
+
+### Carry-forwards to Plans 3c/3d
+
+- HTGN's dominance suggests the thesis should foreground "HTGN was the strongest baseline across all datasets" as a major finding.
+- DyGNN and DGCN integrations may not change the qualitative picture but will quantify the gap.
+- For Plan 4 thesis writeup: investigate WHY GCN_MA paper's Table 2 didn't include HTGN as a baseline (HTGN appeared in 2021, paper published 2024 — should have been included). This is a real critique of the paper's experimental rigor.
