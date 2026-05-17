@@ -1,0 +1,7 @@
+experiment_name: htgn_eut
+seed: 42
+dataset_config: configs/datasets/eut.yaml
+model_config: configs/models/htgn.yaml
+device: cuda
+checkpoint_dir: results/checkpoints
+metrics_path: results/metrics.jsonl
