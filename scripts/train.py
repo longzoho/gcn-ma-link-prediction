@@ -113,7 +113,7 @@ def _build_model(model_cfg: dict, graph):
             dropout=model_cfg["dropout"],
         )
     elif name == "dygnn":
-        from src.models.dygnn import DyGNN
+        from src.models.dygnn.model import DyGNN
         return DyGNN(
             num_nodes=graph.num_nodes,
             hidden_dim=model_cfg["hidden_dim"],
