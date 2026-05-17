@@ -101,6 +101,17 @@ def _build_model(model_cfg: dict, graph):
             num_layers=model_cfg["num_layers"],
             dropout=model_cfg["dropout"],
         )
+    elif name == "htgn":
+        from src.models.htgn import HTGN
+        return HTGN(
+            num_nodes=graph.num_nodes,
+            feat_dim=model_cfg["feat_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            num_layers=model_cfg["num_layers"],
+            curvature=model_cfg["curvature"],
+            trainable_curvature=model_cfg["trainable_curvature"],
+            dropout=model_cfg["dropout"],
+        )
     raise ValueError(f"Unknown model name: {name!r}")
 
 
