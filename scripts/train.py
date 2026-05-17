@@ -112,6 +112,17 @@ def _build_model(model_cfg: dict, graph):
             trainable_curvature=model_cfg["trainable_curvature"],
             dropout=model_cfg["dropout"],
         )
+    elif name == "dygnn":
+        from src.models.dygnn import DyGNN
+        return DyGNN(
+            num_nodes=graph.num_nodes,
+            hidden_dim=model_cfg["hidden_dim"],
+            node_memory_dim=model_cfg["node_memory_dim"],
+            edge_dim=model_cfg["edge_dim"],
+            dropout=model_cfg["dropout"],
+            decay_method=model_cfg["decay_method"],
+            decay_rate=model_cfg["decay_rate"],
+        )
     raise ValueError(f"Unknown model name: {name!r}")
 
 
