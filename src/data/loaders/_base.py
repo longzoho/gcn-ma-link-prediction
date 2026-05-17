@@ -32,7 +32,7 @@ class SNAPTemporalLoader(ABC):
     binning_strategy: str = "equal_time"  # or "quantile"
     # Bump this whenever the cache payload format changes (independent of
     # dataset-specific preprocess_version) to invalidate all existing caches.
-    _CACHE_FORMAT_VERSION: str = "fmt2"
+    _CACHE_FORMAT_VERSION: str = "fmt3"  # fmt3 adds edge_ts per snapshot for DyGNN
 
     @abstractmethod
     def parse(self, path: Path) -> pd.DataFrame:
@@ -73,6 +73,7 @@ class SNAPTemporalLoader(ABC):
         N = cached["num_nodes"]
         for t in range(cached["num_time_steps"]):
             edge_index = cached["edge_index"][t]
+            edge_ts = cached["edge_ts"][t]  # NEW: fmt3
             features = cached["features"][t]
             A = torch.zeros(N, N)
             if edge_index.numel() > 0:
@@ -87,6 +88,7 @@ class SNAPTemporalLoader(ABC):
             data = Data(edge_index=edge_index, num_nodes=N)
             data.x = features
             data.S_hat = S_hat
+            data.edge_ts = edge_ts  # NEW: fmt3
             snapshots.append(data)
 
         return DynamicGraph(
@@ -113,11 +115,13 @@ class SNAPTemporalLoader(ABC):
 
         features_list: list[torch.Tensor] = []
         edge_index_list: list[torch.Tensor] = []
+        edge_ts_list: list[torch.Tensor] = []  # NEW: fmt3 adds edge_ts per snapshot
 
         for t in range(num_time_steps):
             mask = (df.ts >= bins[t]) & (df.ts < bins[t + 1])
-            sub = df.loc[mask, ["src", "dst"]].values
-            edges_list = [(int(u), int(v)) for u, v in sub if u != v]
+            sub = df.loc[mask, ["src", "dst", "ts"]].values  # add "ts" column
+            edges_with_ts = [(int(u), int(v), float(ts)) for u, v, ts in sub if u != v]
+            edges_list = [(u, v) for u, v, ts in edges_with_ts]
 
             G = nx.Graph()
             G.add_nodes_from(range(num_nodes))
@@ -132,6 +136,12 @@ class SNAPTemporalLoader(ABC):
             # S is NOT cached — recomputed cheaply from edge_index + features
             # in build() via A@A. Saves 100-1000x cache size for large datasets.
 
+            if edges_with_ts:
+                ts_array = torch.tensor([ts for u, v, ts in edges_with_ts], dtype=torch.float64)
+            else:
+                ts_array = torch.empty(0, dtype=torch.float64)
+            edge_ts_list.append(ts_array)
+
             if len(edges_list) == 0:
                 edge_index = torch.empty(2, 0, dtype=torch.long)
             else:
@@ -143,6 +153,7 @@ class SNAPTemporalLoader(ABC):
         return {
             "features": features_list,
             "edge_index": edge_index_list,
+            "edge_ts": edge_ts_list,  # NEW: fmt3
             "num_nodes": num_nodes,
             "num_time_steps": num_time_steps,
         }

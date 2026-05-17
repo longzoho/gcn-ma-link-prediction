@@ -117,3 +117,33 @@ def test_quantile_binning_produces_no_empty_bins(tmp_path: Path):
     # With quantile binning, every snapshot must be non-empty.
     empty = [t for t, s in enumerate(g.snapshots) if s.edge_index.shape[1] == 0]
     assert empty == [], f"quantile binning still produced empty snapshots at {empty}"
+
+
+def test_loader_cache_includes_edge_ts(tmp_path):
+    """fmt3 cache must include edge_ts per snapshot (alongside edge_index)."""
+    import gzip
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    raw_file = raw_dir / "raw.txt.gz"
+
+    with gzip.open(raw_file, "wt") as f:
+        f.write("0 1 100\n")
+        f.write("1 2 200\n")
+        f.write("2 3 300\n")
+        f.write("0 3 400\n")
+
+    from src.data.loaders.collegemsg import CollegeMsgLoader
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    loader = CollegeMsgLoader()
+    g = loader.build(raw_file, cache_dir, num_time_steps=2, beta=0.8)
+
+    for t in range(g.num_time_steps):
+        snap = g.snapshots[t]
+        assert hasattr(snap, "edge_ts"), f"snapshot {t} missing edge_ts attribute"
+        assert snap.edge_ts.shape[0] == snap.edge_index.shape[1], \
+            f"snapshot {t} edge_ts length {snap.edge_ts.shape[0]} != edge_index width {snap.edge_index.shape[1]}"
+        assert snap.edge_ts.dtype in (torch.float32, torch.float64), \
+            f"snapshot {t} edge_ts dtype is {snap.edge_ts.dtype}, expected float"
