@@ -302,3 +302,62 @@ The dominant performance of HTGN suggests:
 - HTGN's dominance suggests the thesis should foreground "HTGN was the strongest baseline across all datasets" as a major finding.
 - DyGNN and DGCN integrations may not change the qualitative picture but will quantify the gap.
 - For Plan 4 thesis writeup: investigate WHY GCN_MA paper's Table 2 didn't include HTGN as a baseline (HTGN appeared in 2021, paper published 2024 — should have been included). This is a real critique of the paper's experimental rigor.
+
+---
+
+## Plan 3c: DyGNN baseline integration
+
+### Approach taken
+
+**Path B — vectorized reimplementation** (path A blocked at the perf gate).
+
+Path A (vendored `alge24/DyGNN` at submodule pin `b161555`, adapter wrapping `model_recurrent.DyGNN`) imported cleanly under PyTorch 2.4 with zero shims, but the upstream `forward()` is a pure-Python per-edge loop: ~3 ms/edge (`if_propagation=0`) up to ~10 ms/edge (`if_propagation=1`, paper default). For CollegeMsg's ~60k edges (~120k symmetric) that is 6–20 min per epoch, and the smallest dataset; Mooc/EUT would be hours per epoch. The 3-epoch smoke timed out at 30 min on the dense `if_propagation=1` setting. This is an algorithmic property (DyGNN paper specifies sequential per-edge updates), not bad upstream code — and the plan's path-B appendix (B1–B4) replicates the same per-edge pattern, so verbatim path B would not have rescued the perf.
+
+Switched to a **vectorized path B variant**: deviates from spec by batching all edges within a snapshot into one `GRUCell` call. The submodule remains in `third_party/DyGNN/` for citation but is no longer imported.
+
+Modules at `src/models/dygnn/` (~235 LOC total):
+- `node_memory.py` (16 LOC) — `nn.Parameter [N, D]`, zero-init per spec §9.1.
+- `edge_update.py` (93 LOC) — vectorized `CoupledGRUUpdate`. For one snapshot's `(edge_index, edge_ts)`: builds per-edge messages `(src→dst, dst→src)` with time decay, `index_add` aggregates into per-node messages (count-normalized), feeds one `gru_source` and one `gru_target` `nn.GRUCell` over all active nodes in parallel, picks updated rows where the node was active. Same simplification class as TGN.
+- `interaction.py` (18 LOC) — identity placeholder (paper Eq. 8-9 propagation skipped — would require per-snapshot adjacency lookup, defeating the batched form).
+- `model.py` (95 LOC) — composition + per-epoch cache + decoder.
+
+**Perf result on CollegeMsg smoke (3 epochs, seed 42):** 8.66 s end-to-end, val_auc=0.9525, AUC=0.9230. Roughly **~200× faster** than path A's timed-out attempt at the same workload.
+
+### Per-epoch cache: trained vs eval
+
+Spec §5 originally proposed a per-epoch memory cache reused across forward calls within an epoch. In PyTorch eager mode this fails because the trainer calls `loss.backward()` per training step, which frees the shared autograd graph — the next forward returning a cached tensor hits `RuntimeError: ... modified by inplace operation`. Adapter resolves by **rebuilding the cache on every forward when grad is enabled**, and reusing only under `torch.no_grad()` (eval/inference). Test coverage updated accordingly (`test_dygnn_cache_reuses_within_epoch_eval`).
+
+### Hyperparameter policy (Hybrid)
+
+Shared with GCN_MA / EvolveGCN-O / HTGN: `hidden_dim=64`, `node_memory_dim=64`, `dropout=0.1`, `lr=1e-3`, `weight_decay=1e-5`, Adam, `epochs=200`, patience 20, `grad_clip_max_norm=5.0`.
+
+DyGNN-specific: `edge_dim=16`, `decay_method="log"`, `decay_rate=1.0`, learnable `nn.Parameter` `memory.state` of shape `[N, 64]` initialized to zero.
+
+### Deviations from DyGNN paper
+
+1. **Vectorized batched update within a snapshot** — paper does strict per-edge sequential updates. Our variant aggregates all edges in a snapshot into one batched `GRUCell` call. Cross-snapshot temporal order preserved; within-snapshot strict chronology lost. This is the TGN-style approximation.
+2. **Per-epoch memory cache** with rebuild-on-grad gradient approximation (spec §5).
+3. **Interaction unit is identity** — paper Eq. 8-9 neighbor propagation skipped to keep the form batchable.
+4. **Shared MLP decoder** instead of paper's scoring head.
+5. **LastFM skipped** — 1.29M edges × edge-sequence × 200 epochs would still be impractical even vectorized; this also keeps DyGNN's dataset coverage aligned with what's reportable. 5 datasets × 3 seeds = 15 runs.
+
+### Loader cache schema bump fmt2 → fmt3
+
+Each cached snapshot now exposes `edge_ts` — float64 tensor of original timestamps for chronological sort within a snapshot. Other 3 models ignore the attribute. Cost: one-time ~2.5 min re-preprocess across all 5 datasets (LastFM not re-preprocessed).
+
+### Final results — 5 datasets × 3 seeds
+
+_TODO: paste cross-comparison table from `results/report/baselines_summary.md` after Task 10 (full 15-run) lands. Smoke seed 42 CollegeMsg: AUC=0.9231._
+
+### Engineering wins
+
+- **Empirically discovered the perf gate** before committing to a full run: 30-min smoke timeout led to the path A→B decision instead of burning days on a doomed full sweep.
+- **Vectorized DyGNN delivers ~200× over path A** at smoke scale — making the full 15-run feasible on the 12GB 3060 budget.
+- **Submodule retained for citation** despite not being imported — readers can verify upstream reference.
+
+### Carry-forwards to Plan 3d (DGCN)
+
+- DGCN has no canonical repo → reimplement-from-scratch is the only option.
+- DyGNN's vectorized-batched message pattern is reusable for DGCN's dynamic-conv flavor.
+- `_build_model` dispatch handles 4 models cleanly; adding DGCN is one branch + one config family.
+
