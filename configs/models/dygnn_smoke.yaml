@@ -1,0 +1,13 @@
+name: dygnn
+hidden_dim: 32
+node_memory_dim: 32
+edge_dim: 8
+dropout: 0.1
+lr: 1.0e-3
+weight_decay: 1.0e-5
+optimizer: adam
+epochs: 3
+early_stop_patience: 20
+grad_clip_max_norm: 5.0
+decay_method: log
+decay_rate: 1.0
