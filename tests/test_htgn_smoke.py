@@ -51,3 +51,44 @@ def test_can_construct_htgn():
     )
     assert m is not None
     assert m.node_emb.weight.shape == (50, 64)
+
+
+from torch_geometric.data import Data
+
+
+def _make_dummy_snapshots(N: int, T: int) -> list[Data]:
+    snaps = []
+    for _ in range(T):
+        ei = torch.randint(0, N, (2, N * 2))
+        d = Data(edge_index=ei, num_nodes=N)
+        snaps.append(d)
+    return snaps
+
+
+def test_htgn_forward_shape():
+    N, T, D = 50, 5, 64
+    m = HTGN(
+        num_nodes=N, feat_dim=D, hidden_dim=D, num_layers=2,
+        curvature=1.0, trainable_curvature=False, dropout=0.0,
+    )
+    snaps = _make_dummy_snapshots(N, T)
+    Z = m(snaps, time_step=T - 1)
+    assert Z.shape == (N, D), f"expected ({N}, {D}), got {Z.shape}"
+    assert torch.isfinite(Z).all(), "HTGN forward produced NaN/Inf"
+
+
+def test_htgn_gradient_flows():
+    N, T, D = 50, 4, 64
+    m = HTGN(
+        num_nodes=N, feat_dim=D, hidden_dim=D, num_layers=2,
+        curvature=1.0, trainable_curvature=False, dropout=0.0,
+    )
+    snaps = _make_dummy_snapshots(N, T)
+    Z = m(snaps, time_step=T - 1)
+    loss = Z.sum()
+    loss.backward()
+    has_grad = any(
+        p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0
+        for p in m.parameters()
+    )
+    assert has_grad, "no finite non-zero gradient on any parameter"
