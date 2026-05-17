@@ -167,47 +167,60 @@ The upstream `EGCN.__init__` had two issues that broke standard `nn.Module` mach
 
 `_patch_upstream_egcn()` in `src/models/evolvegcn.py` fixes both by promoting `GRCU_layers` to `nn.ModuleList` and restoring `_parameters` to `{}`. 0 changes made to upstream code.
 
-### Results — 3 of 6 datasets
+### Initial attempt — bipartite failure (subsequently fixed)
 
-EvolveGCN-O reproduced successfully on CollegeMsg, Bitcoinotc, EUT:
+First implementation produced **`Z = all zeros`** on the 3 bipartite datasets (LastFM, Mooc-actions, Wikipedia), yielding val_auc = 0.5000 every epoch. Diagnostic confirmed:
 
-| Dataset      | GCN_MA AUC      | EvolveGCN-O AUC | Δ (GCN_MA − EvolveGCN-O) |
-|--------------|-----------------|------------------|--------------------------|
-| collegemsg   | 0.9005 ± 0.0002 | 0.8259 ± 0.0010  | **+0.075** ⭐ |
-| bitcoinotc   | 0.8560 ± 0.0054 | 0.8139 ± 0.0204  | **+0.042** ⭐ |
-| eut          | 0.9008 ± 0.0016 | 0.8620 ± 0.0017  | **+0.039** ⭐ |
+- Upstream EGCN forward returns zero output even at single-snapshot input.
+- Gradient norms exactly 0 on all `core` and `node_emb` parameters. Only `decoder.bias` gets gradient.
+- Root cause: upstream's directed sparse adjacency made items have zero in-degree in `A @ X`, propagating zeros through both GRCU layers.
 
-GCN_MA wins on all 3 datasets — expected direction (paper's contribution: NRNAE + attention beats vanilla EvolveGCN).
+### Fix applied: symmetrize adjacency
 
-### Known limitation: bipartite datasets
+In `EvolveGCN_O.forward`, edges are duplicated before building the sparse adjacency:
 
-EvolveGCN-O produced **`Z = all zeros`** on the 3 bipartite datasets (LastFM, Mooc-actions, Wikipedia), yielding val_auc = 0.5000 every epoch and best_epoch = 0. Root cause investigation (see `results/logs/evolvegcn_o_lastfm_seed42_*.log` and ad-hoc diagnostics):
+```python
+ei_sym = torch.cat([ei, ei.flip(0)], dim=1)  # add reverse edges
+A = torch.sparse_coo_tensor(ei_sym, vals, (N, N)).coalesce()
+```
 
-- Upstream EGCN forward returns zero output even at single-snapshot input (`time_step=0`).
-- Gradient norms are exactly 0 on all `core` parameters and on `node_emb`. Only `decoder.bias` gets gradient — model can't distinguish positive from negative pairs because Z is constant.
-- For comparable non-bipartite N (CollegeMsg N=1899 vs LastFM N=1980), CollegeMsg produces non-zero Z starting at `time_step=1`.
-- Conjecture: upstream's directed sparse adjacency + Xavier-init scaling + bipartite block-diagonal structure (`A^T A` is block-diagonal) cause RReLU to saturate to zero. Items have zero in-degree in our adjacency construction, so their rows in `A @ X @ W` are exactly zero.
+This makes A symmetric (item rows have non-zero entries). Verified on LastFM smoke: val_auc jumped from 0.5 → 0.97 in 3 epochs.
 
-**Stale entries removed** from `results/metrics.jsonl` (9 records: lastfm, mooc_actions, wikipedia × 3 seeds). Cross-model table shows `—` for these.
+**Trade-off vs the EvolveGCN paper:** paper-style adjacency is directed for asymmetric graphs. Our symmetrize matches what GCN_MA implicitly does via the spectral normalization in `Ŝ`. Both models now use undirected adjacency — apples-to-apples.
 
-**Fix candidates** (not pursued in Plan 3a, deferred to follow-up):
-- Symmetrize adjacency: `A = A + A^T` so item rows have signal too.
-- Larger node embedding init (e.g., `nn.init.uniform_(-1, 1)` instead of Xavier).
-- Truncated window (process only last K snapshots).
-- Use NRNAE features as input (departs from "baselines vanilla" but enables apples-to-apples comparison).
+### Final results — all 6 datasets × 3 seeds
 
-### Final 27 metric records
+After symmetrize fix, 18 EvolveGCN-O runs completed. Total wall-clock 2.61 hours.
 
-15 GCN_MA (Plan 2) + 9 EvolveGCN-O (Plan 3a partial success) = 27 in `results/metrics.jsonl`. Plan 1 archive (1 record at hidden_dim=128) remains in `results/metrics_plan1_hidden128.jsonl`.
+| Dataset      | GCN_MA AUC      | EvolveGCN-O AUC | Δ (GCN_MA − EvolveGCN-O) | Winner |
+|--------------|-----------------|------------------|--------------------------|--------|
+| collegemsg   | 0.9005 ± 0.0002 | 0.8643 ± 0.0110  | **+0.036**  | GCN_MA ⭐ |
+| bitcoinotc   | 0.8560 ± 0.0054 | 0.8349 ± 0.0254  | **+0.021**  | GCN_MA ⭐ |
+| eut          | 0.9008 ± 0.0016 | 0.9245 ± 0.0013  | **-0.024**  | EvolveGCN-O |
+| mooc_actions | 0.9845 ± 0.0002 | 0.9523 ± 0.0010  | **+0.032**  | GCN_MA ⭐ |
+| lastfm       | 0.8004 ± 0.0040 | 0.9550 ± 0.0092  | **-0.155** ⚠️ | EvolveGCN-O |
+| wikipedia    | 0.8696 ± 0.0007 | 0.8540 ± 0.0094  | **+0.016**  | GCN_MA ⭐ |
 
-Wait — actually 18 GCN_MA from Plan 2. Let me recount:
-- 18 GCN_MA (6 datasets × 3 seeds, Plan 2)
-- 9 EvolveGCN-O (3 working datasets × 3 seeds, Plan 3a)
-- **27 total** ✓
+**Summary:** GCN_MA wins 4/6 datasets (CollegeMsg, Bitcoinotc, Mooc, Wikipedia). EvolveGCN-O wins on EUT and notably on LastFM by a large margin.
+
+### Interpretation
+
+GCN_MA's contributions (NRNAE features + LSTM weight evolution + attention) help on most datasets but **lose to vanilla EvolveGCN on LastFM**. Possible reasons:
+
+1. **GCN_MA under-performed on LastFM in Plan 2** (0.80 vs paper 0.876, gap -7.5%). Re-tuning could narrow the gap to ~0.876, but EvolveGCN-O at 0.955 would still win.
+2. **EvolveGCN-O's GRU weight evolution** may suit dense bipartite user-item graphs (LastFM has 650 edges/node, by far the densest). The recurrent weight update captures listening-session temporal patterns effectively.
+3. **Our hyperparameter choice (hidden_dim=64) was tuned on Bitcoinotc** for GCN_MA. The Plan 2 grid showed hidden_dim=128 might be better in some cases. EvolveGCN-O uses hidden_dim=64 too but has a learnable embedding plus internal weight evolution that provides more effective capacity.
+
+For the thesis: this is a real finding. We can report "GCN_MA wins 4/6, but EvolveGCN-O is the better choice for dense bipartite networks like LastFM."
+
+### Final 36 metric records
+
+18 GCN_MA (Plan 2) + 18 EvolveGCN-O (Plan 3a) = **36 records** in `results/metrics.jsonl`. Plan 1 archive (1 record at hidden_dim=128) remains in `results/metrics_plan1_hidden128.jsonl`.
 
 ### Carry-forwards to Plans 3b/c/d
 
 - `_build_model` dispatch in `scripts/train.py` is extensible — same pattern for HTGN, DyGNN, DGCN.
 - `aggregate_results.py --models` works for arbitrary model lists.
-- Bipartite failure for EvolveGCN should be investigated before reporting Plan 4 final numbers — fix or document properly.
-- The `_patch_upstream_egcn()` PyTorch 2.4 shim approach may be needed for other 2019-2020 upstream baselines.
+- **Symmetrize adjacency** should be applied to all baselines that use directed sparse adjacencies, especially for bipartite datasets. Document in their reproduction logs.
+- `_patch_upstream_egcn()` PyTorch 2.4 shim pattern (promote plain lists → ModuleList, reset `_parameters` dict) may be needed for other 2019-2020 upstream baselines.
+- **LastFM gap for GCN_MA** is now an interesting research question — what makes LastFM special? Worth investigating before Plan 4 thesis writeup.
