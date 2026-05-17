@@ -31,3 +31,23 @@ def test_can_import_upstream_htgn():
     finally:
         sys.argv = _saved_argv
     assert HTGN is not None
+
+
+import torch
+
+from src.models.htgn import HTGN
+
+
+def test_can_construct_htgn():
+    """Adapter constructor succeeds with realistic shapes."""
+    m = HTGN(
+        num_nodes=50,
+        feat_dim=64,
+        hidden_dim=64,
+        num_layers=2,
+        curvature=1.0,
+        trainable_curvature=False,
+        dropout=0.1,
+    )
+    assert m is not None
+    assert m.node_emb.weight.shape == (50, 64)
