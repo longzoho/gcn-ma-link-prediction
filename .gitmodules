@@ -1,3 +1,6 @@
 [submodule "third_party/EvolveGCN"]
 	path = third_party/EvolveGCN
 	url = https://github.com/IBM/EvolveGCN
+[submodule "third_party/HTGN"]
+	path = third_party/HTGN
+	url = https://github.com/marlin-codes/HTGN
