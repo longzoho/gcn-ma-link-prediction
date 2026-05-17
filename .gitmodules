@@ -4,3 +4,6 @@
 [submodule "third_party/HTGN"]
 	path = third_party/HTGN
 	url = https://github.com/marlin-codes/HTGN
+[submodule "third_party/DyGNN"]
+	path = third_party/DyGNN
+	url = https://github.com/alge24/DyGNN
