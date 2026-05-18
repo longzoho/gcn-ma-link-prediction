@@ -407,6 +407,7 @@ def main() -> None:
     plots = args.plots.split(",") if args.plots != "all" else [
         "auc_bar", "ap_bar", "learning_curves", "ranking_heatmap",
         "beta_sensitivity", "runtime", "dataset_stats",
+        "dataset_snapshots", "edge_growth", "topology_map",
     ]
 
     if "auc_bar" in plots:
@@ -442,6 +443,26 @@ def main() -> None:
         out = args.out_dir.parent / "dataset_stats.md"
         write_dataset_stats(stats, out)
         print(f"Wrote {out}")
+
+    if any(k in plots for k in ("dataset_snapshots", "edge_growth", "topology_map")):
+        from scripts.plot_dataset_topology import (
+            plot_dataset_snapshots_grid,
+            plot_edge_growth_density,
+            plot_topology_map,
+        )
+        if "dataset_snapshots" in plots:
+            plot_dataset_snapshots_grid(args.out_dir / "dataset_snapshots_grid.png")
+            print(f"Wrote {args.out_dir / 'dataset_snapshots_grid.png'}")
+        if "edge_growth" in plots:
+            plot_edge_growth_density(args.out_dir / "edge_growth_density.png")
+            print(f"Wrote {args.out_dir / 'edge_growth_density.png'}")
+        if "topology_map" in plots:
+            plot_topology_map(
+                args.out_dir / "topology_map_2d.png",
+                args.out_dir / "topology_map_2d_with_winners.png",
+            )
+            print(f"Wrote {args.out_dir / 'topology_map_2d.png'}")
+            print(f"Wrote {args.out_dir / 'topology_map_2d_with_winners.png'}")
 
 
 if __name__ == "__main__":
