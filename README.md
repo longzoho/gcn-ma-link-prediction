@@ -27,12 +27,27 @@ See `docs/superpowers/specs/2026-05-16-gcn-ma-link-prediction-design.md` for des
 ## Slides
 
 Thesis defense deck (Vietnamese, ~20 min) organized around temporal graph evolution.
+Full 28-slide PPTX (22 main + 6 appendix) with all plot images auto-embedded.
 
-- Outline (Gamma input):  `docs/slides/thesis_defense_outline.md` (22 main + 6 appendix)
+- Deck (PPTX):             `docs/slides/thesis_defense.pptx`
+- Outline source:          `docs/slides/thesis_defense_outline.md`
+- Builder script:          `scripts/build_pptx.py` (python-pptx, no slide cap)
 - Spec:                    `docs/superpowers/specs/2026-05-18-thesis-slides-design.md`
 - Plan:                    `docs/superpowers/plans/2026-05-18-thesis-slides.md`
-- Generated deck URL:      `docs/slides/gamma_deck_url.txt` (10-slide highlights — Gamma plan caps numCards at 10)
+- Gamma fallback (10-slide highlights, superseded): `docs/slides/gamma_deck_url.txt`
 - Topology plots:          `results/report/plots/topology_map_2d*.png`, `dataset_snapshots_grid.png`, `edge_growth_density.png`
+
+Build the full PPTX:
+
+```bash
+.venv/bin/python scripts/build_pptx.py
+```
+
+Validate (print slide count + titles):
+
+```bash
+.venv/bin/python scripts/build_pptx.py --validate
+```
 
 Render all plots (existing + topology):
 
