@@ -1,12 +1,16 @@
 """Smoke tests for dataset-topology plots."""
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from scripts.plot_dataset_topology import (
     DATASETS,
+    degree_gini,
     load_cached_snapshots,
     plot_dataset_snapshots_grid,
+    plot_edge_growth_density,
+    plot_topology_map,
 )
 
 
@@ -33,11 +37,6 @@ def test_plot_dataset_snapshots_grid_writes_nonempty_png(tmp_path):
     assert out.stat().st_size > 5000  # at least 5 KB
 
 
-from scripts.plot_dataset_topology import (
-    plot_edge_growth_density,
-)
-
-
 def _all_caches_present() -> bool:
     return all(_has_cache(n, T) for n, T, *_ in DATASETS)
 
@@ -48,3 +47,25 @@ def test_plot_edge_growth_density_writes_nonempty_png(tmp_path):
     plot_edge_growth_density(out)
     assert out.exists()
     assert out.stat().st_size > 5000
+
+
+def test_degree_gini_uniform_is_zero():
+    """A regular graph (everyone same degree) has Gini = 0."""
+    degrees = np.array([4, 4, 4, 4, 4])
+    assert degree_gini(degrees) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_degree_gini_star_approaches_one():
+    """A hub-and-spoke degree sequence has high Gini (very skewed distribution)."""
+    degrees = np.array([50] + [1] * 10)  # one dominant hub, ten leaves
+    g = degree_gini(degrees)
+    assert g > 0.5  # very skewed
+
+
+@pytest.mark.skipif(not _all_caches_present(), reason="All 6 caches required.")
+def test_plot_topology_map_writes_both_pngs(tmp_path):
+    plain = tmp_path / "topology.png"
+    annotated = tmp_path / "topology_winners.png"
+    plot_topology_map(plain, annotated)
+    assert plain.exists() and plain.stat().st_size > 5000
+    assert annotated.exists() and annotated.stat().st_size > 5000

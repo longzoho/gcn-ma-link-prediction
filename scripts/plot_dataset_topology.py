@@ -206,7 +206,120 @@ def plot_edge_growth_density(out_path: Path) -> None:
     plt.close(fig)
 
 
-def plot_topology_map(out_plain: Path, out_with_winners: Path) -> None: ...
+def degree_gini(degrees: np.ndarray) -> float:
+    """Gini coefficient of a non-negative array.
+
+    Formula: G = sum_i sum_j |x_i - x_j| / (2 n^2 mean(x)).
+    Vectorised via sorted-cumsum trick: G = (2 sum_i i * x_(i) ) / (n sum x) - (n+1)/n.
+    Returns 0 for the empty / all-zero case.
+    """
+    x = np.asarray(degrees, dtype=np.float64)
+    if x.size == 0 or x.sum() == 0:
+        return 0.0
+    x_sorted = np.sort(x)
+    n = x_sorted.size
+    cum = np.cumsum(x_sorted)
+    # 1-indexed weights
+    return float((2.0 * np.sum(np.arange(1, n + 1) * x_sorted)) / (n * cum[-1]) - (n + 1) / n)
+
+
+def _mean_density(data: dict) -> float:
+    return float(np.mean(_density_per_snapshot(data)))
+
+
+def _cumulative_degree_gini(data: dict) -> float:
+    """Build the cumulative undirected graph, compute degree-Gini."""
+    N = int(data["num_nodes"])
+    edges_set: set[tuple[int, int]] = set()
+    for ei in data["edge_index"]:
+        for u, v in ei.t().tolist():
+            a, b = int(u), int(v)
+            if a == b:
+                continue
+            edges_set.add((min(a, b), max(a, b)))
+    degrees = np.zeros(N, dtype=np.int64)
+    for u, v in edges_set:
+        degrees[u] += 1
+        degrees[v] += 1
+    return degree_gini(degrees)
+
+
+def _collect_topology_points() -> list[dict]:
+    """Compute (mean density, degree Gini, bipartite flag) for every dataset."""
+    pts: list[dict] = []
+    for name, T, bipartite, label, color in DATASETS:
+        try:
+            data = load_cached_snapshots(name, T)
+        except FileNotFoundError:
+            print(f"Warning: missing cache for {name}; skipping in topology map.")
+            continue
+        pts.append({
+            "name": name,
+            "label": label,
+            "color": color,
+            "bipartite": bipartite,
+            "density": _mean_density(data),
+            "gini": _cumulative_degree_gini(data),
+        })
+    return pts
+
+
+def _draw_topology_scatter(ax, points: Iterable[dict], annotate_winner: bool = False) -> None:
+    for p in points:
+        marker = "D" if p["bipartite"] else "o"
+        ax.scatter(
+            p["density"], p["gini"],
+            marker=marker, s=160, c=p["color"],
+            edgecolors="black", linewidth=0.8, zorder=3,
+        )
+        # Dataset label always (offset up-right).
+        ax.annotate(
+            p["label"],
+            xy=(p["density"], p["gini"]),
+            xytext=(8, 6), textcoords="offset points",
+            fontsize=10, zorder=4,
+        )
+        if annotate_winner:
+            winner = DATASET_WINNERS.get(p["name"], "?")
+            ax.annotate(
+                f"→ {winner}",
+                xy=(p["density"], p["gini"]),
+                xytext=(8, -12), textcoords="offset points",
+                fontsize=9, fontweight="bold", color="#b00020", zorder=4,
+            )
+    ax.set_xscale("log")
+    ax.set_xlabel(r"Mật độ trung bình $\bar{\rho}$ (log scale)")
+    ax.set_ylabel("Degree-distribution Gini (proxy cho phân cấp)")
+    ax.grid(True, alpha=0.3)
+    # Legend for marker shape.
+    from matplotlib.lines import Line2D
+    legend_elems = [
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="grey",
+               markeredgecolor="black", markersize=10, label="Unipartite"),
+        Line2D([0], [0], marker="D", color="w", markerfacecolor="grey",
+               markeredgecolor="black", markersize=10, label="Bipartite"),
+    ]
+    ax.legend(handles=legend_elems, loc="lower right", fontsize=10)
+
+
+def plot_topology_map(out_plain: Path, out_with_winners: Path) -> None:
+    points = _collect_topology_points()
+
+    # --- Plain version (Slide 7) ---
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _draw_topology_scatter(ax, points, annotate_winner=False)
+    ax.set_title("Bản đồ 6 mạng theo 2 trục cấu trúc")
+    fig.tight_layout()
+    fig.savefig(out_plain, dpi=150)
+    plt.close(fig)
+
+    # --- Annotated version (Slide 18) ---
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _draw_topology_scatter(ax, points, annotate_winner=True)
+    ax.set_title("Diagnosis: cấu trúc tiến hóa ↔ mô hình thắng (AUC top-1)")
+    fig.tight_layout()
+    fig.savefig(out_with_winners, dpi=150)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
