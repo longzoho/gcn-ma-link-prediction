@@ -1,0 +1,7 @@
+experiment_name: dgcn_lastfm
+seed: 42
+dataset_config: configs/datasets/lastfm.yaml
+model_config: configs/models/dgcn.yaml
+device: cuda
+checkpoint_dir: results/checkpoints
+metrics_path: results/metrics.jsonl

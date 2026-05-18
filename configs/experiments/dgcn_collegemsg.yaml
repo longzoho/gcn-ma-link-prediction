@@ -1,0 +1,7 @@
+experiment_name: dgcn_collegemsg
+seed: 42
+dataset_config: configs/datasets/collegemsg.yaml
+model_config: configs/models/dgcn.yaml
+device: cuda
+checkpoint_dir: results/checkpoints
+metrics_path: results/metrics.jsonl

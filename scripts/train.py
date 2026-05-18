@@ -123,6 +123,16 @@ def _build_model(model_cfg: dict, graph):
             decay_method=model_cfg["decay_method"],
             decay_rate=model_cfg["decay_rate"],
         )
+    elif name == "dgcn":
+        from src.models.dgcn import DGCN
+        return DGCN(
+            num_nodes=graph.num_nodes,
+            feat_dim=model_cfg["feat_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            num_gcn_layers=model_cfg["num_gcn_layers"],
+            num_lstm_layers=model_cfg["num_lstm_layers"],
+            dropout=model_cfg["dropout"],
+        )
     raise ValueError(f"Unknown model name: {name!r}")
 
 
