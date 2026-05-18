@@ -174,22 +174,31 @@ def plot_ranking_heatmap(df: pd.DataFrame, out_path: Path) -> None:
     canonical_cols = [d for d in DATASETS_ORDER if d in ranks.columns]
     rows = canonical_rows if canonical_rows else list(ranks.index)
     cols = canonical_cols if canonical_cols else list(ranks.columns)
-    ranks = ranks.loc[rows, cols].fillna(0).astype(int)
+    ranks = ranks.loc[rows, cols]
+    # Build annotation grid: integer rank, "—" for NaN (missing model×dataset)
+    annot = ranks.copy().astype(object)
+    for r in rows:
+        for c in cols:
+            v = ranks.loc[r, c]
+            annot.loc[r, c] = "—" if pd.isna(v) else f"{int(v)}"
+    # Mask NaN cells so they render grey (no fill color)
+    mask = ranks.isna()
     labels_x = [DATASET_LABELS.get(c, c) for c in cols]
     labels_y = [MODEL_LABELS.get(r, r) for r in rows]
     fig, ax = plt.subplots(figsize=(8, 5))
     sns.heatmap(
         ranks,
-        annot=True,
-        fmt="d",
+        annot=annot.values,
+        fmt="",
         cmap="RdYlGn_r",
         cbar_kws={"label": "Rank"},
         xticklabels=labels_x,
         yticklabels=labels_y,
         ax=ax,
         linewidths=0.5,
+        mask=mask,
     )
-    ax.set_title("Ranking per dataset (1 = best AUC mean)")
+    ax.set_title("Ranking per dataset (1 = best AUC mean; — = not run)")
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
