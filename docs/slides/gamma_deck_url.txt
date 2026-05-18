@@ -1,0 +1,53 @@
+Gamma deck for thesis defense — generated 2026-05-18
+
+Generation ID: dIHOVY2xcs2i8CsW2G7Um
+Share URL:     https://gamma.app/generations/dIHOVY2xcs2i8CsW2G7Um
+
+Outline source: docs/slides/thesis_defense_outline.md
+Spec source:    docs/superpowers/specs/2026-05-18-thesis-slides-design.md
+Plan source:    docs/superpowers/plans/2026-05-18-thesis-slides.md
+
+---
+
+IMPORTANT — Plan deviation: 10 slides vs. 28 in the spec
+
+The Gamma API on this account is capped at numCards <= 10 per generation.
+Original spec called for 22 main slides + 6 appendix = 28 cards. To work
+around the cap, the generated deck is a CONDENSED HIGHLIGHTS version of
+10 slides covering the full story arc:
+
+  1. Title
+  2. Bài toán + 3 câu hỏi nghiên cứu (merged from spec slides 2+3)
+  3. 6 datasets stats (spec slide 4)
+  4. 5 chiến lược bám thời gian (condensed from spec slides 8-12)
+  5. Thiết lập thực nghiệm (spec slide 13)
+  6. Bảng tổng hợp kết quả (merged from spec slides 14+15)
+  7. Ranking heatmap (spec slide 16)
+  8. Diagnosis topology ↔ winner (spec slide 18 — the keystone slide)
+  9. GCN_MA tỏa sáng/tụt hậu + runtime (merged from spec slides 19+20)
+ 10. Đóng góp + Q&A (merged from spec slides 21+22)
+
+The full 28-slide outline is preserved at:
+  docs/slides/thesis_defense_outline.md
+
+If you want the full deck, options are:
+  (a) Open this generated 10-slide deck in the Gamma editor and manually
+      add the missing slides one-by-one using the outline as reference
+  (b) Generate 2 additional decks (slides 11-20 and 21-28) and stitch
+      them together — but you'll have 3 separate gamma URLs to manage
+  (c) Upgrade the Gamma plan tier (resolves the 10-card cap entirely)
+
+Manual editor steps still required (after Gamma finishes generating):
+
+  1. Open the share URL above in a browser
+  2. Upload these PNGs from results/report/plots/ into the corresponding
+     "Khung trống cho biểu đồ ..." placeholder boxes:
+       Slide 3: dataset_snapshots_grid.png, topology_map_2d.png
+       Slide 7: ranking_heatmap.png, auc_comparison.png
+       Slide 8: topology_map_2d_with_winners.png
+       Slide 9: beta_sensitivity.png, runtime_comparison.png
+  3. Fill in [Tên], [Tên GVHD], [Ngày], [URL] placeholders on slides 1
+     and 10 with your real name, supervisor's name, defense date, and
+     GitHub repo URL
+  4. Adjust theme/typography if desired
+  5. Export to PDF for backup; export to PPTX for hand-off
