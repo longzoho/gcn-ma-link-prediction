@@ -1,13 +1,17 @@
 [SUPERSEDED] Gamma deck for thesis defense — generated 2026-05-18
 
-The canonical slide deck is now the python-pptx build:
-  docs/slides/thesis_defense.pptx  (28 slides — 22 main + 6 appendix)
+Canonical slide decks (both generate 28 slides — 22 main + 6 appendix):
 
-Build command:
-  .venv/bin/python scripts/build_pptx.py
+  PPTX deck:
+    docs/slides/thesis_defense.pptx
+    Build:    .venv/bin/python scripts/build_pptx.py
+    Validate: .venv/bin/python scripts/build_pptx.py --validate
 
-Validate (print slide titles):
-  .venv/bin/python scripts/build_pptx.py --validate
+  HTML deck (Reveal.js v5, self-contained, works offline):
+    docs/slides/thesis_defense.html
+    Build:    .venv/bin/python scripts/build_revealjs.py
+    Validate: .venv/bin/python scripts/build_revealjs.py --validate
+    PDF export: open thesis_defense.html?print-pdf in Chrome → Print → Save as PDF
 
 ---
 
