@@ -428,3 +428,156 @@ Biểu đồ runtime (thang log ở trục y) hiển thị tổng thời gian ch
 
 Một phát hiện kỹ thuật quan trọng trong quá trình tái hiện là **tối ưu hóa vectorized của DyGNN**: phiên bản upstream của DyGNN xử lý từng cạnh tuần tự qua vòng lặp Python, dẫn đến runtime không thực tế trên các tập lớn. Phiên bản tái hiện (Plan 3c) batch-hóa toàn bộ cạnh trong một snapshot thành tensor và thực hiện GRU update song song trên GPU, giảm runtime khoảng 200 lần so với vòng lặp Python gốc. Chính nhờ tối ưu hóa này mà DyGNN có thể chạy trên Mooc-Actions, Wikipedia, CollegeMsg, và EUT trong ngân sách thời gian — mặc dù LastFM với 1.29M cạnh vẫn quá lớn ngay cả với vectorized variant, do tiêu thụ bộ nhớ GPU theo batch toàn snapshot vượt ngưỡng 12 GB VRAM.
 
+---
+
+## 4. Thảo luận và hạn chế
+
+### 4.1 HTGN — baseline mạnh nhất xuyên suốt sáu datasets
+
+HTGN (Hyperbolic Temporal Graph Network, Yang et al. 2021) là baseline cho kết quả vượt trội nhất trong toàn bộ thực nghiệm: giành chiến thắng trên 2/6 datasets (CollegeMsg và Bitcoinotc), và nằm trong top-3 trên cả sáu datasets, bao gồm cả những dataset mà nó không xếp nhất. Đây là profile ổn định nhất trong số năm mô hình được so sánh.
+
+Điểm mấu chốt tạo nên sức mạnh của HTGN nằm ở **không gian embedding hyperbolic**. Thay vì ánh xạ node embedding vào không gian Euclidean phẳng như các GCN thông thường, HTGN sử dụng Poincaré ball — một mô hình không gian hyperbolic có đặc tính thể tích tăng theo hàm mũ theo khoảng cách từ gốc. Tính chất này phù hợp tự nhiên với cấu trúc cây và phân cấp (hierarchical structure): trong một Poincaré ball với bán kính đơn vị, số lượng điểm có thể đặt cách tâm một khoảng $r$ tăng tỉ lệ với $e^r$, trong khi không gian Euclidean chỉ tăng đa thức $r^{d-1}$. Điều này có nghĩa là các đồ thị có phân phối bậc theo luật lũy thừa (power-law degree distribution) — đặc trưng của mạng xã hội, mạng tin cậy, mạng email — được biểu diễn hiệu quả hơn trong Poincaré ball so với không gian phẳng.
+
+Cả sáu dataset trong thực nghiệm đều thể hiện cấu trúc này ở mức độ khác nhau: CollegeMsg và Bitcoinotc là mạng xã hội/tin cậy thưa thớt với vài hub có bậc cao; EUT là mạng email tổ chức với cấu trúc phân cấp bộ phận ngầm; Mooc, LastFM, và Wikipedia là đồ thị bipartite user-item với head-user và long-tail-item tự nhiên. Poincaré ball với độ cong $c=1.0$ cố định đã đủ để nắm bắt cấu trúc này mà không cần thêm tự do learnable curvature — điều này cho thấy sự ổn định số học khi kết hợp với optimizer Adam theo Hybrid policy của thực nghiệm.
+
+Về mặt chi phí tính toán, HTGN là mô hình tốn kém nhất trong nhóm: tổng runtime qua sáu datasets (ba seeds) đạt khoảng 9.2 giờ, trong đó EUT một mình chiếm hơn 6 giờ (T=127 snapshot phải unroll qua các phép tính hyperbolic tốn kém). Đây là đánh đổi cần cân nhắc khi triển khai trên production: HTGN đạt AUC cao nhất nhưng đòi hỏi ngân sách tính toán lớn hơn đáng kể so với EvolveGCN-O (chỉ 2.6 giờ tổng cộng) hay GCN_MA (~4 giờ).
+
+---
+
+### 4.2 DyGNN — chiến thắng trên các dataset dense
+
+DyGNN (Ma et al. 2020) đạt kết quả tốt nhất trên Mooc-Actions (0.9956) và Wikipedia (0.9805), hai datasets có tỉ lệ số cạnh trên số snapshot (E/T ratio) cao nhất trong nhóm: Mooc có khoảng 5.700 cạnh/snapshot và Wikipedia có khoảng 2.600 cạnh/snapshot. Trong khi đó, HTGN chiến thắng trên các dataset thưa hơn như CollegeMsg (~120 cạnh/snapshot) và Bitcoinotc (~40 cạnh/snapshot). Sự phân kỳ này phản ánh một inductive bias rõ ràng: DyGNN phù hợp với **continuous-time signal dày đặc**, còn HTGN mạnh hơn khi cấu trúc phân cấp topo chiếm ưu thế so với tần suất cạnh.
+
+Kiến trúc của DyGNN được tái hiện trong thực nghiệm này theo **phiên bản vectorized** (Plan 3c, path B): thay vì cập nhật GRU theo từng cạnh tuần tự như paper gốc Manessi (2020), toàn bộ cạnh trong một snapshot được batch thành một tensor và gửi qua một lần gọi `GRUCell` duy nhất. Đây là xấp xỉ theo phong cách TGN (Rossi et al. 2020) — cross-snapshot temporal order được bảo toàn, nhưng thứ tự nghiêm ngặt trong nội bộ snapshot bị hy sinh để đổi lấy tốc độ tính toán khoảng 200 lần. Sự đánh đổi này được ghi lại đầy đủ như một deviation so với paper gốc (xem §4.6), nhưng về mặt thực tiễn nó đã làm cho DyGNN khả thi trên budget tính toán RTX 3060 trong khoảng 4.3 giờ cho 15 runs (không tính LastFM).
+
+Một quan sát đáng chú ý là **best\_epoch=1** trên Mooc-Actions ở cả ba seeds — mô hình đạt hiệu suất tối ưu ngay sau epoch đầu tiên và sau đó không cải thiện thêm. Pattern này cũng xuất hiện ở HTGN trên cùng dataset, gợi ý rằng Mooc-Actions bị chi phối bởi **node identity** (identity của từng sinh viên và khóa học) hơn là temporal dynamics thực sự — cấu trúc đồ thị tĩnh từ snapshot đầu đã chứa đủ signal để dự đoán liên kết, và memory zero-init kết hợp với scatter đầu tiên đã encode được thông tin đó.
+
+LastFM bị bỏ qua hoàn toàn đối với DyGNN: 1.29M cạnh nhân với edge-sequence processing nhân với 200 epochs vẫn vượt quá ngân sách tính toán cho phép ngay cả với vectorized variant, do tiêu thụ bộ nhớ GPU theo batch toàn snapshot vượt ngưỡng 12 GB VRAM. Điều này dẫn đến coverage bất đối xứng trong bảng so sánh — DyGNN chỉ được đánh giá trên 5/6 datasets.
+
+---
+
+### 4.3 DGCN — baseline đơn giản nhưng cạnh tranh
+
+DGCN (Dynamic Graph Convolutional Networks, Manessi et al. 2020, biến thể WD-GCN) là baseline được tái hiện hoàn toàn từ đầu trong thực nghiệm này (Plan 3d), do không có canonical repository chính thức. Kiến trúc gồm hai tầng spectral GCN tích lũy embedding theo từng snapshot, sau đó một LSTM đặt qua trục thời gian để tổng hợp signal động — đây là recipe "GCN stack + LSTM" đơn giản nhất trong số năm baseline.
+
+Mặc dù đơn giản, DGCN vẫn mang lại kết quả cạnh tranh đáng kể: thắng EUT với AUC=0.9847 (marginal so với HTGN 0.9838 — hai mô hình nằm trong khoảng một std của nhau, có thể coi là tied), và xếp thứ ba trên 4/6 datasets còn lại. Đặc biệt, **DGCN vượt GCN_MA trên 5/6 datasets** — chỉ thua trên CollegeMsg với biên độ 0.0034 (thực chất là ngang nhau). Điều này có ý nghĩa quan trọng: một mô hình GCN+LSTM bậc thấp được triển khai trong ~150 dòng code đơn file đã đủ để vượt mô hình phức tạp hơn nhiều trên phần lớn các dataset.
+
+Trên Bitcoinotc, **best\_epoch hội tụ rất sớm** (epoch 1-3) ở cả ba seeds — giống pattern HTGN trên Mooc và DGCN trên CollegeMsg. Điều này gợi ý rằng trên một số dataset, node embedding initialization (Xavier uniform) đã encode đủ signal structural từ snapshot đầu tiên, và quá trình training sau đó chỉ tinh chỉnh nhỏ thay vì học features mới. Pattern này có thể là dấu hiệu của overfitting tiềm ẩn hoặc của việc dataset có signal tập trung ở snapshots đầu timeline.
+
+Về mặt kỹ thuật, bài toán tái hiện DGCN không gặp bất kỳ lỗi runtime nào trong suốt 18 runs — toàn bộ records đổ về sau attempt đầu tiên, không như DyGNN (Plan 3c) phải xử lý OOM và cache schema bump. Sparse adjacency (`torch.sparse_coo_tensor`) được xây on-the-fly mỗi snapshot giúp giữ footprint bộ nhớ thấp trên cả sáu datasets kể cả LastFM và Wikipedia (tránh materialized dense N×N matrix).
+
+---
+
+### 4.4 EvolveGCN-O — biến động theo đặc tính dataset
+
+EvolveGCN-O (Pareja et al. 2020) là baseline duy nhất giành chiến thắng trên LastFM với AUC=0.9550, vượt nhẹ HTGN (0.9514) trong phạm vi overlap std. Tuy nhiên, đây cũng là mô hình có biến động hiệu suất lớn nhất giữa các datasets: từ 0.9550 trên LastFM xuống còn 0.8643 trên CollegeMsg và 0.8349 trên Bitcoinotc — spread lên tới gần 12 điểm AUC. Std trên Bitcoinotc (0.025) là cao nhất trong nhóm cho mô hình này, cho thấy sự nhạy cảm của GRU weight evolution với initialization ngẫu nhiên trên dataset có cấu trúc trust-score phức tạp.
+
+Sức mạnh của EvolveGCN-O trên LastFM có thể được giải thích bởi đặc tính của dataset: LastFM là đồ thị bipartite user-item cực dense (1.29M cạnh, 650 cạnh/người dùng), trong đó pattern nghe nhạc theo session mang tính tuần tự cao. Cơ chế cập nhật trọng số GCN qua GRU của EvolveGCN-O nắm bắt hiệu quả sự thay đổi của ma trận trọng số convolution theo thời gian, phù hợp với tính chất "weight drift" của preference người dùng trong recommendation-type graphs.
+
+Ngược lại, EvolveGCN-O tỏ ra yếu hơn trên CollegeMsg và Bitcoinotc — hai dataset thưa thớt hơn với cấu trúc temporal không đều đặn. GRU weight evolution có thể nhạy cảm với scale đặc trưng đầu vào: khi feature scale thay đổi đột ngột giữa các snapshots (điển hình ở Bitcoinotc với trust scores có dải [-10, +10]), hyperbolic stability của GRU suy giảm nếu trọng số khởi tạo không được căn chỉnh cẩn thận.
+
+Về mặt kỹ thuật, adapter EvolveGCN-O (Plan 3a) gặp hai lỗi upstream do PyTorch 2.4 không tương thích: `self._parameters` bị ghi đè với `nn.ParameterList` (vi phạm `Module._apply()`) và `GRCU_layers` được lưu dưới dạng Python list thường (không hiển thị với parameter traversal). Hai lỗi này được vá trong adapter qua hàm `_patch_upstream_egcn()` — 3 dòng code, không thay đổi upstream. Ngoài ra, lỗi bipartite zero-output (Z = all zeros trên LastFM/Mooc/Wikipedia do directed adjacency khiến item node có in-degree bằng 0) được khắc phục bằng cách symmetrize adjacency, đưa val\_auc từ 0.5 lên 0.97 trong 3 epochs. EvolveGCN-O cũng là baseline nhanh nhất về tổng runtime (~2.6 giờ cho 6 datasets × 3 seeds), nhờ cơ chế GRU đơn giản chỉ cập nhật ma trận trọng số GCN thay vì embedding per-node.
+
+---
+
+### 4.5 GCN_MA — vấn đề tái hiện và hàm ý
+
+GCN_MA không thắng bất kỳ dataset nào trong số sáu datasets được đánh giá (0/6 wins) — đây là finding trung tâm của luận văn này và có giá trị học thuật quan trọng. Khoảng cách lớn nhất giữa GCN_MA và baseline tốt nhất xuất hiện tại **LastFM**: EvolveGCN-O đạt 0.9550, trong khi GCN_MA chỉ đạt 0.8004 — gap 15.5 điểm AUC. Khoảng cách lớn thứ hai tại **Bitcoinotc**: HTGN đạt 0.9147, GCN_MA chỉ đạt 0.8560 — gap 5.9 điểm AUC.
+
+Khi so sánh với số liệu Table 2 của bài báo gốc (Mei & Zhao 2024), bản tái hiện này **gần sát nhau trên bốn datasets**: CollegeMsg (Δ=-1.4%), EUT (Δ=-2.1%), Mooc-Actions (Δ=-0.4%), Wikipedia (Δ=-0.5%). Hai dataset còn lại có gap đáng kể hơn: Bitcoinotc (Δ=-5.6%) và LastFM (Δ=-7.5%). Mức độ tái hiện thành công trên 4/6 datasets cho thấy số liệu bài báo không tự mâu thuẫn với thiết lập thực nghiệm được mô tả, nhưng hai gap lớn gợi ý có những yếu tố ngoài phạm vi mô tả của bài báo — các lệch chuẩn cụ thể được phân tích ở §4.6.
+
+**Tại sao gap tại LastFM lớn nhất?** LastFM có N=1980 node (980 users + 1000 items) — số node nhỏ — nhưng E=1.29M cạnh — cực kỳ dense. Trên đồ thị dense như vậy, các đặc trưng NRNAE (degree, CC, AS) của GCN_MA có thể mất tính discriminative: hầu hết mọi node đều có clustering coefficient cao và aggregated strength cao vì mật độ cạnh lớn. Khi mọi node có feature vector gần giống nhau, bước convolution GCN không mang lại signal phân biệt. Bài báo có thể sử dụng thêm đặc trưng content ngầm (e.g., tag âm nhạc, biểu diễn âm thanh của bài hát) mà không được công bố trong phần mô tả phương pháp.
+
+**Tại sao gap tại Bitcoinotc lớn thứ hai?** Bitcoin OTC là mạng tin cậy có trọng số ký (signed, dải [-10, +10]). Learnable `nn.Embedding` không tận dụng được cấu trúc đối xứng/bất đối xứng của trust score. Hơn nữa, NRNAE aggregation sử dụng cạnh theo nghĩa absolute (positive aggregation), bỏ qua chiều hướng âm/dương của trust — trong khi những mô hình như HTGN có thể học ẩn tính chất này qua curvature embedding.
+
+**Khẳng định quan trọng:** Kết quả thực nghiệm trong luận văn này cho thấy GCN_MA paper-reported AUC trên Table 2 không vững khi đặt trong bối cảnh các baseline hiện đại hơn cùng thời. Cụ thể, trên Wikipedia paper báo 0.874 — HTGN trong thực nghiệm này đạt 0.956 (+8.2%) và DyGNN đạt 0.981 (+10.7%). Trên CollegeMsg paper báo 0.915 — HTGN đạt 0.943 (+2.8%). Bài báo Mei & Zhao (2024) không so sánh với HTGN, DyGNN, DGCN hay EvolveGCN-O, mặc dù tất cả bốn mô hình này đều được công bố trước năm 2024 (xem §4.8 để phân tích chi tiết hơn về điểm này).
+
+---
+
+### 4.6 Các lệch chuẩn so với bài báo đã được tài liệu hóa
+
+Toàn bộ quá trình tái hiện được ghi lại chi tiết trong `docs/reproduction-log.md`. Dưới đây là bảy lệch chuẩn chính được tài liệu hóa, mỗi lệch chuẩn có rationale và tham chiếu đến plan tương ứng. Quan trọng là không lệch chuẩn nào ảnh hưởng đến định nghĩa của AUC hay AP — do đó so sánh chéo giữa các mô hình vẫn có giá trị.
+
+**Lệch 1 — Learnable `nn.Embedding` thay vì one-hot `I_N` (Plan 2, Plan 3a/3b/3c/3d).** Spec gốc §6.6 yêu cầu one-hot identity matrix làm feature đầu vào cho các baseline. Tuy nhiên, chi phí RAM của one-hot `I_N` với N lớn là không khả thi: Wikipedia có N≈9.228 node, LasFM có N=1.980, Mooc có N≈7.144 — kết hợp với dense batch training, một-hot I_N sẽ đòi hỏi vài chục GB RAM. Thay thế bằng `nn.Embedding(N, feat_dim)` với Xavier initialization — đây cũng là convention được dùng trong codebase gốc của IBM/EvolveGCN cho trường hợp N lớn.
+
+**Lệch 2 — Quantile binning cho EUT (Plan 2).** Bài báo không nêu chiến lược phân bin thời gian cho EUT. Với binning equal-time (T=127 đều nhau theo thời gian thực), 24 bin liên tiếp trong vùng validation bị rỗng (zero-edge snapshots), khiến val\_auc bị khóa ở 0.5000 do không có positive pairs. Quantile binning (mỗi bin có số cạnh bằng nhau) giải quyết vấn đề này và đưa AUC từ 0.535 lên 0.90+. Deviation này chỉ ảnh hưởng đến EUT và được kích hoạt qua cờ `binning_strategy = "quantile"` trong config loader.
+
+**Lệch 3 — Symmetrize adjacency cho bipartite datasets (Plan 3a/3b/3c/3d).** Ba datasets bipartite (Mooc-Actions, LastFM, Wikipedia) có đồ thị bipartite user-item theo chiều hướng user→item. Adjacency directed khiến item nodes có in-degree bằng 0 trong phép nhân A @ X, dẫn đến zero-output ở mọi mô hình dùng spectral aggregation trên directed adjacency. Fix: nhân đôi mỗi cạnh (u, v) thành cả (u, v) và (v, u) — symmetrize. Điều này phù hợp với assumption undirected mà GCN_MA cũng đang dùng ngầm qua spectral normalization của $\hat{S}$.
+
+**Lệch 4 — Vectorized batched DyGNN (Plan 3c).** Paper Ma et al. (2020) chỉ định cập nhật GRU per-edge tuần tự (strict chronological order). Phiên bản tái hiện batch hóa toàn bộ cạnh trong một snapshot thành một lần gọi `GRUCell` song song — mất strict intra-snapshot chronology nhưng giữ cross-snapshot order. Đây là xấp xỉ TGN-style và nhanh hơn khoảng 200 lần so với per-edge loop. Không có vectorized variant thì DyGNN không thể chạy trên bất kỳ dataset nào ngoài CollegeMsg trong budget tính toán.
+
+**Lệch 5 — Sparse adjacency cho DGCN (Plan 3d).** Paper Manessi et al. (2020) không bàn về cài đặt bộ nhớ cụ thể. Tái hiện sử dụng `torch.sparse_coo_tensor` on-the-fly mỗi snapshot thay vì materialized dense N×N — tránh OOM trên Wikipedia (N≈9.228, dense N×N sẽ tốn ~400MB mỗi snapshot chỉ cho adjacency). Về mặt toán học, dense và sparse cho kết quả giống nhau.
+
+**Lệch 6 — Shared `LinkDecoderMLP` cho tất cả baselines.** Paper HTGN (Yang et al. 2021) dùng Fermi-Dirac decoder trên hyperbolic distance; paper DyGNN (Ma et al. 2020) dùng scoring head riêng; paper EvolveGCN (Pareja et al. 2020) dùng dot-product. Tái hiện này thay thế tất cả bằng `LinkDecoderMLP` dùng chung — MLP hai tầng với sigmoid đầu ra. Lý do: đảm bảo **so sánh công bằng** giữa năm mô hình (chỉ khác nhau ở encoder, không phải decoder). Đây là design decision quan trọng nhất trong thiết kế thực nghiệm.
+
+**Lệch 7 — Adam optimizer cho mọi baseline.** Bài báo Mei & Zhao (2024) không nêu optimizer. Paper gốc Manessi (2020) dùng SGD. Paper EvolveGCN (Pareja et al. 2020) dùng Adam. Tái hiện áp dụng Adam cho tất cả theo Hybrid policy để đồng nhất điều kiện training.
+
+---
+
+### 4.7 Mối đe dọa đối với tính hợp lệ
+
+Mỗi mối đe dọa dưới đây được liệt kê cùng với phân tích về mức độ ảnh hưởng đến kết luận của thực nghiệm.
+
+**Phạm vi tìm kiếm siêu tham số.** Grid-search β và hidden\_dim chỉ được thực hiện trên **một dataset duy nhất** (Bitcoinotc), một seed, và 50 epochs (Plan 2). Giả định rằng cấu hình tối ưu trên Bitcoinotc cũng gần tối ưu trên năm datasets còn lại không được kiểm chứng. Cụ thể, kết quả Plan 2 cho thấy hidden\_dim=64 thắng trên Bitcoinotc, nhưng cũng ghi nhận rằng LastFM với 1.29M cạnh có thể hưởng lợi từ hidden\_dim=128 do capacity. Việc mở rộng grid-search ra nhiều dataset và nhiều seeds có thể thu hẹp gap GCN_MA trên LastFM và Bitcoinotc.
+
+**Số seed thấp.** Chỉ có ba seeds (42, 123, 2024) cho mỗi cặp (model, dataset), không đủ statistical power để thực hiện paired t-test có độ tin cậy cao (n=3, bậc tự do=2). Luận văn này không claim statistical significance — các kết quả được báo cáo là mean ± std với mục đích mô tả xu hướng, không phải kiểm định hypothesis.
+
+**Phần cứng đơn.** Toàn bộ thực nghiệm được chạy trên RTX 3060 12GB dưới WSL2 trên Windows 11. Reproducibility cross-platform không được kiểm chứng — PyTorch CUDA kernel variants trên A100 hay V100 có thể tạo ra các kết quả khác nhau ở mức độ bit-exact do non-determinism trong distributed reduce operations. Tuy nhiên, với std<0.01 qua ba seeds trên hầu hết cặp (model, dataset), chúng tôi tin rằng variation này không làm thay đổi bức tranh tổng thể.
+
+**LastFM bỏ qua với DyGNN.** DyGNN chỉ được đánh giá trên 5/6 datasets, tạo ra bảng so sánh bất đối xứng. Khi tính "wins per baseline", DyGNN có denominator là 5 thay vì 6, làm cho so sánh trực tiếp với các baseline 6/6 không hoàn toàn đồng đẳng. Điều này được ghi chú rõ trong bảng kết quả nhưng vẫn là một limitation.
+
+**Negative sampling cho đồ thị không hướng.** Protocol negative sampling xử lý cạnh theo chiều hướng: cho một positive edge (u, v), cạnh ngược (v, u) vẫn eligible là negative. Đối với đồ thị undirected, đây là conservative bias — AP có thể bị underestimate nhẹ. Điểm này đã được ghi nhận trong Plan 1 self-review và flagged nhưng không được fix do đồng nhất convention qua tất cả models là ưu tiên so sánh.
+
+**AUC/AP pooled theo test snapshots.** Metrics được tổng hợp (pooled) trên tất cả test snapshots — không phân tích per-snapshot trend theo timeline. Do đó, không thể kết luận mô hình nào bị degradation về cuối timeline (concept drift) hay mô hình nào ổn định theo thời gian. Đây là hướng phân tích bổ sung có thể thực hiện trong tương lai.
+
+---
+
+### 4.8 Phê bình bài báo gốc Mei & Zhao (2024)
+
+Bài báo "Dynamic graph link prediction based on graph convolutional networks with multi-head self-attention mechanism" (Mei & Zhao, *Scientific Reports*, 2024) đóng góp kiến trúc GCN_MA với cơ chế NRNAE và LSTM weight evolution có giá trị học thuật rõ ràng. Tuy nhiên, thực nghiệm tái hiện trong luận văn này chỉ ra một số hạn chế trong thiết kế thực nghiệm so sánh (comparative experiment design) mà cộng đồng nghiên cứu nên lưu ý.
+
+**Thiếu các baseline mạnh đã được công bố trước.** Table 2 của bài báo so sánh GCN_MA với các mô hình như GCN tĩnh, TGCN, và một số baseline cổ điển, nhưng **không bao gồm bốn baseline đã công bố trước năm 2024** và có thể áp dụng trực tiếp cho bài toán dynamic link prediction:
+
+- **EvolveGCN** (Pareja et al., AAAI 2020) — Evolving Graph Convolutional Networks.
+- **DyGNN** (Ma et al., KDD 2020) — Dynamic Graph Neural Networks.
+- **DGCN / WD-GCN** (Manessi et al., *Pattern Recognition* 2020) — Dynamic Graph Convolutional Networks.
+- **HTGN** (Yang et al., *Information Sciences* 2021) — Hyperbolic Temporal Graph Network.
+
+Cả bốn mô hình đều được công bố từ năm 2020-2021, ít nhất ba năm trước khi bài báo Mei & Zhao (2024) được nộp. Việc không bao gồm các baseline này trong Table 2 khiến claim về tính vượt trội của GCN_MA trên sáu datasets không có nền tảng so sánh đầy đủ.
+
+**Hàm ý của thực nghiệm này.** Thực nghiệm trong luận văn cho thấy mỗi trong bốn baseline nêu trên vượt GCN_MA trên ít nhất một dataset trong số sáu datasets được đánh giá. Cụ thể: HTGN vượt GCN_MA paper-reported AUC trên cả sáu datasets (tính theo tái hiện của luận văn); DyGNN vượt GCN_MA paper-AUC trên Wikipedia (+10.7%) và Mooc (+0.8%); DGCN vượt trên LastFM và EUT; EvolveGCN-O vượt trên LastFM (+9.0% so với paper AUC 0.876) và EUT. Do đó, claim "GCN_MA dominant trên sáu datasets" của bài báo cần được đặt trong bối cảnh baseline pool hạn chế của Table 2.
+
+**Thiếu thông tin siêu tham số.** Bài báo không công bố các siêu tham số cốt lõi: learning rate, hidden dimension, số attention heads, optimizer, batch size, chiến lược negative sampling, hay tỉ lệ train/val/test. Đây là barrier đáng kể cho reproduction — nhóm tái hiện phải educated guess tất cả các giá trị này và ghi lại đầy đủ trong reproduction log. Trong bối cảnh reproduction crisis ngày càng được cộng đồng ML quan tâm (Pineau et al., 2021), thiếu thông tin này làm giảm giá trị tham khảo của kết quả thực nghiệm.
+
+**Đề xuất.** Bài báo Mei & Zhao (2024) có thể tăng giá trị học thuật bằng cách bổ sung phần "Extended Baselines" so sánh với EvolveGCN-O, HTGN, DyGNN, và DGCN; hoặc cung cấp hyperparameter table đầy đủ để cộng đồng có thể tái hiện sát số liệu gốc. Những bổ sung này không phủ nhận đóng góp kỹ thuật của GCN_MA, mà giúp định vị chính xác hơn vị trí của mô hình trong không gian giải pháp hiện tại.
+
+---
+
+### 4.9 Hướng phát triển tiếp theo
+
+Dựa trên những hạn chế đã xác định và pattern hiệu suất quan sát được, chúng tôi đề xuất các hướng phát triển sau cho các công trình tiếp theo.
+
+**Tăng cường kiểm định thống kê.** Chạy ít nhất 10 seeds cho mỗi cặp (model, dataset) để đủ statistical power thực hiện paired t-test và Wilcoxon signed-rank test giữa năm baselines trên sáu datasets. Hiện tại n=3 không cho phép claim significance cho bất kỳ sự khác biệt nào, dù khoảng cách quan sát được đôi khi lớn.
+
+**Tuning siêu tham số per-dataset.** Hiện tại hidden\_dim, β, dropout, và learning rate được chia sẻ đồng nhất qua tất cả datasets theo Hybrid policy — một lựa chọn hợp lý cho so sánh công bằng nhưng không tối ưu về hiệu suất tuyệt đối. Tuning riêng cho từng dataset (đặc biệt LastFM với hidden\_dim=128 và Bitcoinotc với β grid đầy đủ hơn) có thể thu hẹp gap GCN_MA.
+
+**β sensitivity trên năm datasets ngoài Bitcoinotc.** Grid-search β hiện chỉ được thực hiện trên Bitcoinotc. Mở rộng grid-search ra CollegeMsg, EUT, Mooc, LastFM, và Wikipedia sẽ xác nhận (hoặc bác bỏ) giả thuyết rằng β=0.8 là lựa chọn tốt xuyên suốt.
+
+**Hybrid architecture: HTGN encoder + DGCN temporal LSTM.** Kết quả thực nghiệm gợi ý rằng Poincaré ball embedding của HTGN kết hợp với cơ chế LSTM qua snapshot của DGCN có thể tạo ra mô hình hybrid mạnh hơn cả hai. HTGN nắm bắt tốt cấu trúc phân cấp topo; DGCN aggregation đơn giản qua thời gian bổ sung temporal smoothing. Đây là hướng kiến trúc có lý luận lý thuyết rõ ràng.
+
+**Mở rộng sang datasets quy mô lớn hơn.** Sáu datasets hiện tại (2020-2022 vintage) không phản ánh quy mô của các mạng hiện đại: đồ thị social/commerce năm 2024 thường có hàng triệu nodes và hàng tỉ cạnh. Evaluating trên SNAP-scale datasets (e.g., Ogbn-arxiv temporal split, TGB benchmark 2024) sẽ xác nhận khả năng scale-out của từng kiến trúc.
+
+**DyGNN trên LastFM.** Với tối ưu hóa thêm — ví dụ chunked snapshot processing thay vì full-snapshot batching, hoặc mixed-precision training (fp16) — có thể đưa DyGNN vào đánh giá đầy đủ 6/6 datasets, giải quyết asymmetry hiện tại trong bảng so sánh.
+
+---
+
+### 4.10 Kết luận
+
+Luận văn này trình bày kết quả tái hiện đầy đủ của GCN_MA (Mei & Zhao 2024) trên sáu datasets chuẩn, cùng với bốn baseline hiện đại được tích hợp để đánh giá chéo: EvolveGCN-O, HTGN, DyGNN, và DGCN. Toàn bộ thực nghiệm bao gồm 87 metric records (18 GCN_MA + 18 EvolveGCN-O + 18 HTGN + 15 DyGNN + 18 DGCN), 11 biểu đồ phân tích, một bảng thống kê dataset, hai pipeline scripts tự động hóa, và phần tài liệu hóa đầy đủ bằng tiếng Việt. Quá trình phát triển được đánh dấu qua bốn tag git: `v0.3a-evolvegcn-o` → `v0.3b-htgn` → `v0.3c-dygnn` → `v0.3d-dgcn` → `v1.0-thesis-ready`.
+
+**Finding chính:** Bản tái hiện GCN_MA ổn định và gần sát số liệu paper trên 4/6 datasets (gap dưới 2.1%), nhưng yếu hơn so với bốn baseline 2020-2021 trên phần lớn các tình huống đánh giá. GCN_MA không giành chiến thắng trên bất kỳ dataset nào trong số sáu datasets khi so sánh với baseline tốt nhất tương ứng. HTGN là baseline mạnh nhất tổng thể (top-3 trên 6/6 datasets), DyGNN mạnh nhất trên các đồ thị dense continuous-time (Mooc, Wikipedia), EvolveGCN-O tốt nhất trên LastFM, và DGCN đáng ngạc nhiên cạnh tranh với kiến trúc đơn giản nhất trong nhóm.
+
+Điều này không phủ nhận đóng góp kỹ thuật của GCN_MA — cơ chế NRNAE và LSTM weight evolution là những ý tưởng có cơ sở lý thuyết tốt. Tuy nhiên, kết quả thực nghiệm cho thấy rằng pool baseline trong Table 2 của bài báo gốc quá hẹp để support claim về tính vượt trội, và rằng các mô hình hyperbolic embedding (đặc biệt HTGN) cung cấp một alternative approach mạnh hơn cho phần lớn các loại dynamic graph trong thực tế.
+
+Repository tái hiện này được tổ chức để cộng đồng có thể audit và mở rộng: `docs/reproduction-log.md` ghi lại mọi lệch chuẩn so với paper gốc; `results/metrics.jsonl` chứa toàn bộ 87 records có thể query bằng `aggregate_results.py`; và bốn submodule trong `third_party/` giữ nguyên upstream codebase để tham chiếu trực tiếp.
+
