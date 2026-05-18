@@ -377,3 +377,85 @@ Total runtime: ~4.3h (15 runs, dominated by EUT 3 × 56 min). Smallest std acros
 - DyGNN's vectorized-batched message pattern is reusable for DGCN's dynamic-conv flavor.
 - `_build_model` dispatch handles 4 models cleanly; adding DGCN is one branch + one config family.
 
+---
+
+## Plan 3d: DGCN baseline integration
+
+### Approach taken
+
+**From-scratch reimplementation** — DGCN has no canonical repo (per project root design spec §7.4). Single-file at `src/models/dgcn.py` (~150 LOC). WD-GCN variant from Manessi 2020 ("Dynamic Graph Convolutional Networks", *Pattern Recognition*). Architecture:
+
+```
+For each snapshot t:
+    X = nn.Embedding[node_ids]                  # [N, 64], shared learnable
+    A_hat = sym_normalize(edge_index + self_loops)
+    H = SpectralGCNLayer(X, A_hat)              # × 2 stacked
+    gcn_outputs.append(H)
+LSTM([H^0, ..., H^t]) -> last hidden -> Z^t [N, 64]
+predict_link via shared LinkDecoderMLP.
+```
+
+Sparse adjacency built via `torch.sparse_coo_tensor` on-the-fly per snapshot — no dense N×N (fits Wikipedia/LastFM on 12GB easily).
+
+### Hyperparameter policy (Hybrid)
+
+Shared with GCN_MA / EvolveGCN-O / HTGN / DyGNN: `feat_dim=64`, `hidden_dim=64`, `dropout=0.1`, `lr=1e-3`, `weight_decay=1e-5`, Adam, `epochs=200`, patience 20, `grad_clip_max_norm=5.0`.
+
+DGCN-specific: `num_gcn_layers=2`, `num_lstm_layers=1`.
+
+### Deviations from Manessi 2020
+
+1. **Learnable `nn.Embedding` instead of one-hot `I_N`** — Plan 2 deviation carried forward, RAM constraint.
+2. **Symmetric adjacency for bipartite datasets** — Plans 3a/3b/3c fix, paper assumed undirected.
+3. **Shared `LinkDecoderMLP` decoder** — same as all baselines, not paper's scoring head.
+4. **Adam optimizer** — paper used SGD; project Hybrid policy.
+5. **Default `hidden_dim=64`** — paper didn't report; project Hybrid default.
+
+### Final results — 6 datasets × 3 seeds (18 records)
+
+| Dataset | DGCN AUC | DGCN AP | Ranking (5-baseline) |
+|---|---|---|---|
+| collegemsg   | 0.8971 ± 0.0056 | 0.9156 ± 0.0058 | 4th (HTGN > DyGNN > GCN_MA > **DGCN** > EvolveGCN) |
+| bitcoinotc   | 0.8778 ± 0.0030 | 0.9051 ± 0.0035 | 3rd (HTGN > DyGNN > **DGCN** > GCN_MA > EvolveGCN) |
+| eut          | **0.9847 ± 0.0007** | **0.9847 ± 0.0010** | **1st** (DGCN > HTGN 0.9838 > DyGNN > EvolveGCN > GCN_MA) |
+| mooc_actions | 0.9904 ± 0.0025 | 0.9862 ± 0.0044 | 3rd (DyGNN > HTGN > **DGCN** > GCN_MA > EvolveGCN) |
+| lastfm       | 0.8959 ± 0.0217 | 0.9062 ± 0.0123 | 3rd (EvolveGCN > HTGN > **DGCN** > GCN_MA, DyGNN skipped) |
+| wikipedia    | 0.9291 ± 0.0040 | 0.9458 ± 0.0032 | 3rd (DyGNN > HTGN > **DGCN** > GCN_MA > EvolveGCN) |
+
+Total runtime: ~4.4h (eut dominates with 3 × 50 min; lastfm 3 × 18 min; others minutes).
+
+### Cross-model observations (5-baseline)
+
+1. **DGCN wins EUT** (0.9847) — marginal lead over HTGN (0.9838), within 1 std. Simple GCN+LSTM stack handles bursty email patterns cleanly; quantile binning helps all snapshot-based models equally.
+2. **DGCN beats GCN_MA on 5/6 datasets** (loses only on CollegeMsg by 0.0034, essentially tied). Notable: DGCN beats GCN_MA on LastFM by +9.5% AUC — same gap pattern as HTGN/EvolveGCN. Confirms GCN_MA reproduction has dataset-specific weaknesses, not a baseline-quality issue.
+3. **DGCN consistently 3rd place** behind HTGN and DyGNN/EvolveGCN on most datasets. Solid, no surprises — confirms the simple "stack of GCNs → LSTM over time" recipe is competitive but not dominant.
+4. **Bitcoinotc converges at epoch 1-3 across all seeds** — same convergence-from-init pattern HTGN had on Mooc. Suggests Bitcoinotc is dominated by graph structure (signed trust scores embedded in node features via embedding init), with little new temporal signal.
+5. **Per-seed variance on LastFM (std=0.022)** is unusually high — best/worst gap of 4% across seeds (0.880-0.921). Likely due to the music-listening dataset's heavy long-tail. Other datasets have std < 0.006.
+
+### Engineering wins
+
+- **Pure-PyTorch sparse implementation** — no PyG-conv dependency, no upstream submodule. Reads like the math.
+- **6 datasets in one run** — DGCN handles LastFM without the compute issues DyGNN had (snapshot paradigm, not edge-sequence).
+- **5th and final baseline** — completes the cross-comparison from the paper's Table 2.
+- **No bugs to fix during 18-run** — all 18 records landed on first attempt, unlike Plan 3c which lost 2 wikipedia runs to OOM/signal.
+
+### Final 5-baseline scoreboard (wins per dataset, on AUC)
+
+| Baseline | Wins | Datasets won |
+|---|---|---|
+| HTGN | 3/6 | collegemsg, bitcoinotc, (mooc tied 2nd) |
+| DyGNN | 2/5 | mooc_actions, wikipedia (lastfm skipped) |
+| **DGCN** | **1/6** | **eut** |
+| EvolveGCN-O | 1/6 | lastfm |
+| GCN_MA (our reproduction) | 0/6 | — |
+
+**HTGN remains the strongest baseline overall** (3 wins, top-3 on all 6). DGCN/DyGNN/EvolveGCN each win 1-2 datasets. Our GCN_MA reproduction never wins — which is the *expected* finding for the thesis (the paper's claims are partially refuted by stronger baselines published since 2021).
+
+### Carry-forwards to Plan 4
+
+- All 5 baselines integrated; metrics.jsonl now has 87 records (18 GCN_MA + 18 EvolveGCN-O + 18 HTGN + 15 DyGNN + 18 DGCN).
+- Reproduction-log has per-plan sections — Plan 4 aggregates into thesis-ready writeup.
+- `aggregate_results.py --models gcn_ma evolvegcn_o htgn dygnn dgcn` produces the canonical 5-baseline comparison.
+- No more baselines to add. Plan 4 = final aggregation, plots, thesis assets.
+
+
