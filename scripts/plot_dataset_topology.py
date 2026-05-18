@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable  # noqa: F401  # used by helpers added in Tasks 2-4
 
 import matplotlib
 matplotlib.use("Agg")
@@ -37,7 +37,7 @@ DATASETS: list[tuple[str, int, bool, str, str]] = [
     ("collegemsg",   47,  False, "CollegeMsg",   "#1f77b4"),
     ("bitcoinotc",   62,  False, "Bitcoinotc",   "#ff7f0e"),
     ("eut",          127, False, "EUT",          "#2ca02c"),
-    ("mooc_actions", 72,  True,  "Mooc-actions", "#d62728"),
+    ("mooc_actions", 72,  True,  "Mooc-Actions", "#d62728"),
     ("lastfm",       41,  True,  "LastFM",       "#9467bd"),
     ("wikipedia",    42,  True,  "Wikipedia",    "#8c564b"),
 ]
