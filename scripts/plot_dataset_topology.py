@@ -158,7 +158,54 @@ def plot_dataset_snapshots_grid(out_path: Path) -> None:
 
 
 # Plot functions for later tasks.
-def plot_edge_growth_density(out_path: Path) -> None: ...
+def _edges_per_snapshot(data: dict) -> list[int]:
+    """Return list of edge counts for each snapshot (length T)."""
+    return [int(ei.shape[1]) for ei in data["edge_index"]]
+
+
+def _density_per_snapshot(data: dict) -> list[float]:
+    """Density rho_t = 2 * E_t / (N * (N - 1)).  N is the global node count."""
+    N = int(data["num_nodes"])
+    if N < 2:
+        return [0.0] * len(data["edge_index"])
+    edges = _edges_per_snapshot(data)
+    return [2.0 * e / (N * (N - 1)) for e in edges]
+
+
+def plot_edge_growth_density(out_path: Path) -> None:
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13, 5))
+
+    for name, T, _bipartite, label, color in DATASETS:
+        try:
+            data = load_cached_snapshots(name, T)
+        except FileNotFoundError:
+            print(f"Warning: missing cache for {name}; skipping line.")
+            continue
+        edges = _edges_per_snapshot(data)
+        density = _density_per_snapshot(data)
+        ts = list(range(1, len(edges) + 1))
+        ax_l.plot(ts, edges, label=label, color=color, linewidth=1.6)
+        ax_r.plot(ts, density, label=label, color=color, linewidth=1.6)
+
+    ax_l.set_xlabel("Snapshot index $t$")
+    ax_l.set_ylabel("Số cạnh trong snapshot $E^t$")
+    ax_l.set_yscale("log")  # span is 0..1e5 across datasets
+    ax_l.set_title("(a) Tăng trưởng số cạnh theo thời gian")
+    ax_l.grid(True, which="both", alpha=0.3)
+    ax_l.legend(loc="lower right", fontsize=9)
+
+    ax_r.set_xlabel("Snapshot index $t$")
+    ax_r.set_ylabel(r"Mật độ $\rho^t = 2 E^t / N(N-1)$")
+    ax_r.set_yscale("log")
+    ax_r.set_title("(b) Mật độ tức thời theo thời gian")
+    ax_r.grid(True, which="both", alpha=0.3)
+    ax_r.legend(loc="lower right", fontsize=9)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_topology_map(out_plain: Path, out_with_winners: Path) -> None: ...
 
 

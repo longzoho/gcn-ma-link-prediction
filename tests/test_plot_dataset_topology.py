@@ -31,3 +31,20 @@ def test_plot_dataset_snapshots_grid_writes_nonempty_png(tmp_path):
     plot_dataset_snapshots_grid(out)
     assert out.exists()
     assert out.stat().st_size > 5000  # at least 5 KB
+
+
+from scripts.plot_dataset_topology import (
+    plot_edge_growth_density,
+)
+
+
+def _all_caches_present() -> bool:
+    return all(_has_cache(n, T) for n, T, *_ in DATASETS)
+
+
+@pytest.mark.skipif(not _all_caches_present(), reason="All 6 caches required.")
+def test_plot_edge_growth_density_writes_nonempty_png(tmp_path):
+    out = tmp_path / "edge_growth.png"
+    plot_edge_growth_density(out)
+    assert out.exists()
+    assert out.stat().st_size > 5000
