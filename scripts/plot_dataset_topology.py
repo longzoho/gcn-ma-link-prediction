@@ -107,8 +107,57 @@ def main() -> None:
         print(f"Wrote {args.out_dir / 'topology_map_2d_with_winners.png'}")
 
 
-# Plot functions are defined in later tasks.
-def plot_dataset_snapshots_grid(out_path: Path) -> None: ...
+def _build_cumulative_graph(snapshots: list[torch.Tensor], up_to: int) -> nx.Graph:
+    """Build an undirected NetworkX graph from edge_index tensors up to snapshot ``up_to``."""
+    G = nx.Graph()
+    for t in range(up_to + 1):
+        ei = snapshots[t]
+        # edge_index is shape [2, E_t]; convert to list of (u, v) python ints.
+        for u, v in ei.t().tolist():
+            G.add_edge(int(u), int(v))
+    return G
+
+
+def plot_dataset_snapshots_grid(out_path: Path) -> None:
+    """3×3 grid of node-link diagrams (3 datasets × 3 timepoints)."""
+    representatives = [
+        ("collegemsg",   47,  False, "CollegeMsg (sparse, unipartite)"),
+        ("eut",          127, False, "EUT (dense, unipartite)"),
+        ("lastfm",       41,  True,  "LastFM (dense, bipartite)"),
+    ]
+    fig, axes = plt.subplots(3, 3, figsize=(11, 11))
+
+    for row, (name, T, _bipartite, title) in enumerate(representatives):
+        data = load_cached_snapshots(name, T)
+        edge_index_list = data["edge_index"]
+        # Three timepoints: 0, T/2, T-1.
+        for col, t in enumerate([0, T // 2, T - 1]):
+            G = _build_cumulative_graph(edge_index_list, t)
+            ax = axes[row, col]
+            # Subsample nodes if too dense so layout converges in <5 s and
+            # the plot is readable.
+            if G.number_of_nodes() > 400:
+                # Keep the 400 highest-degree nodes (preserves hubs).
+                top = sorted(G.degree, key=lambda x: -x[1])[:400]
+                G = G.subgraph([n for n, _d in top]).copy()
+            pos = nx.spring_layout(G, seed=42, k=1.0 / max(1, G.number_of_nodes()) ** 0.5)
+            nx.draw_networkx_edges(G, pos, ax=ax, alpha=0.25, width=0.4)
+            nx.draw_networkx_nodes(G, pos, ax=ax, node_size=6, node_color="#1f77b4")
+            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_frame_on(False)
+            if row == 0:
+                col_title = ["t = 0", "t = T/2", "t = T"][col]
+                ax.set_title(col_title, fontsize=11)
+            if col == 0:
+                ax.set_ylabel(title, fontsize=10, rotation=90, labelpad=10)
+
+    fig.suptitle("Mỗi dataset là một quỹ đạo cấu trúc khác nhau", fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+# Plot functions for later tasks.
 def plot_edge_growth_density(out_path: Path) -> None: ...
 def plot_topology_map(out_plain: Path, out_with_winners: Path) -> None: ...
 
