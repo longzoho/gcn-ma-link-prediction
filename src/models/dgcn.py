@@ -106,8 +106,42 @@ class DGCN(DynamicLinkPredictor):
         )
 
     def forward(self, snapshots, time_step: int) -> torch.Tensor:
-        """Forward — implemented in Task 3."""
-        raise NotImplementedError("DGCN.forward — implemented in Task 3")
+        """Return per-node embedding Z^t [N, hidden_dim] at end of snapshot `time_step`.
+
+        Pipeline:
+            1. For each snapshot t' ∈ [0, time_step]:
+                 X = self.node_emb.weight              # [N, feat_dim], shared learnable
+                 ei_sym = symmetrize(snapshots[t'].edge_index)
+                 H = X
+                 for layer in self.gcn_layers:
+                     H = layer(H, ei_sym, N)
+                 gcn_outputs.append(H)                  # [N, hidden_dim]
+            2. Stack: [time_step+1, N, hidden_dim] -> permute to [N, time_step+1, hidden_dim]
+            3. LSTM (batch=N, seq_len=time_step+1) -> last hidden state per node
+            4. Return [N, hidden_dim]
+        """
+        N = self.num_nodes
+        device = self.node_emb.weight.device
+        gcn_outputs = []
+        for t in range(time_step + 1):
+            snap = snapshots[t]
+            ei = snap.edge_index.to(device) if snap.edge_index.numel() > 0 else snap.edge_index
+            # Symmetrize for bipartite datasets (mooc, wikipedia, lastfm).
+            # Harmless on already-undirected datasets — adds duplicate edges
+            # whose weights renormalize together.
+            if ei.numel() > 0:
+                ei_sym = torch.cat([ei, ei.flip(0)], dim=1)
+            else:
+                ei_sym = ei
+            h = self.node_emb.weight  # [N, feat_dim]
+            for layer in self.gcn_layers:
+                h = layer(h, ei_sym, N)
+            gcn_outputs.append(h)
+
+        # [T, N, D] -> [N, T, D] for batch_first LSTM
+        stacked = torch.stack(gcn_outputs, dim=0).permute(1, 0, 2)
+        out, _ = self.lstm(stacked)  # [N, T, D]
+        return out[:, -1, :]  # last time step per node
 
     def predict_link(self, Z, edges):
         return self.decoder(Z, edges)
