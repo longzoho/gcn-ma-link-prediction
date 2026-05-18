@@ -122,6 +122,135 @@ def plot_auc_comparison(df: pd.DataFrame, out_path: Path, metric: str = "auc") -
 
 
 # --------------------------------------------------------------------------
+# Plot: Learning curves per dataset (5-model mean ± std band)
+# --------------------------------------------------------------------------
+
+def plot_learning_curves(curves_df: pd.DataFrame, dataset: str, out_path: Path) -> None:
+    """One PNG: val_auc vs epoch, 5 model lines (mean across seeds, ±std band)."""
+    sub = curves_df[curves_df["dataset"] == dataset]
+    if sub.empty:
+        return
+    fig, ax = plt.subplots(figsize=(10, 5))
+    # Use canonical order first; fall back to actual unique models in data
+    canonical = [m for m in MODELS_ORDER if m in sub["model"].unique()]
+    other = [m for m in sub["model"].unique() if m not in MODELS_ORDER]
+    models_to_plot = canonical + other
+    for model in models_to_plot:
+        msub = sub[sub["model"] == model]
+        if msub.empty:
+            continue
+        agg = msub.groupby("epoch")["val_auc"].agg(["mean", "std"]).reset_index()
+        label = MODEL_LABELS.get(model, model)
+        ax.plot(agg["epoch"], agg["mean"], label=label, linewidth=1.5)
+        ax.fill_between(
+            agg["epoch"],
+            agg["mean"] - agg["std"].fillna(0),
+            agg["mean"] + agg["std"].fillna(0),
+            alpha=0.2,
+        )
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("val_auc")
+    title_label = DATASET_LABELS.get(dataset, dataset)
+    ax.set_title(f"Learning curves — {title_label} (mean ± std, 3 seeds)")
+    ax.set_ylim(0.5, 1.0)
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------
+# Plot: Ranking heatmap (5 × 6, rank colors)
+# --------------------------------------------------------------------------
+
+def plot_ranking_heatmap(df: pd.DataFrame, out_path: Path) -> None:
+    """Heatmap of per-dataset ranks. Cell = rank 1-5; color from green (1) to red (5)."""
+    import seaborn as sns
+    ranks = compute_ranking(df)
+    # Reorder rows/columns to canonical order if available; otherwise use actual unique values
+    canonical_rows = [m for m in MODELS_ORDER if m in ranks.index]
+    canonical_cols = [d for d in DATASETS_ORDER if d in ranks.columns]
+    rows = canonical_rows if canonical_rows else list(ranks.index)
+    cols = canonical_cols if canonical_cols else list(ranks.columns)
+    ranks = ranks.loc[rows, cols].fillna(0).astype(int)
+    labels_x = [DATASET_LABELS.get(c, c) for c in cols]
+    labels_y = [MODEL_LABELS.get(r, r) for r in rows]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    sns.heatmap(
+        ranks,
+        annot=True,
+        fmt="d",
+        cmap="RdYlGn_r",
+        cbar_kws={"label": "Rank"},
+        xticklabels=labels_x,
+        yticklabels=labels_y,
+        ax=ax,
+        linewidths=0.5,
+    )
+    ax.set_title("Ranking per dataset (1 = best AUC mean)")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------
+# Plot: β sensitivity (from Plan 2 grid data)
+# --------------------------------------------------------------------------
+
+def plot_beta_sensitivity(beta_jsonl: Path, out_path: Path) -> None:
+    """Line plot: β vs val_auc, separate line per hidden_dim."""
+    records = [json.loads(l) for l in Path(beta_jsonl).read_text().splitlines() if l.strip()]
+    df = pd.DataFrame(records)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for hd in sorted(df["hidden_dim"].unique()):
+        sub = df[df["hidden_dim"] == hd].sort_values("beta")
+        ax.plot(sub["beta"], sub["val_auc"], marker="o", linewidth=2, label=f"hidden_dim={hd}")
+    ax.set_xlabel("β (NRNAE weight)")
+    ax.set_ylabel("val_auc")
+    ax.set_title("β sensitivity — Bitcoinotc, seed 42, 50 epochs (Plan 2 grid)")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------
+# Plot: Runtime comparison
+# --------------------------------------------------------------------------
+
+def plot_runtime_comparison(df: pd.DataFrame, out_path: Path) -> None:
+    """Grouped bar of total wall-clock seconds per (model, dataset), log y."""
+    agg = df.groupby(["model", "dataset"])["runtime_s"].sum().reset_index()
+    datasets = [d for d in DATASETS_ORDER if d in agg["dataset"].unique()]
+    models = [m for m in MODELS_ORDER if m in agg["model"].unique()]
+    x = np.arange(len(datasets))
+    width = 0.15
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for i, model in enumerate(models):
+        ys = []
+        for ds in datasets:
+            row = agg[(agg["model"] == model) & (agg["dataset"] == ds)]
+            ys.append(row["runtime_s"].iloc[0] if len(row) else 0)
+        ax.bar(x + (i - 2) * width, ys, width, label=MODEL_LABELS[model])
+    ax.set_xticks(x)
+    ax.set_xticklabels([DATASET_LABELS[d] for d in datasets], rotation=15)
+    ax.set_ylabel("Total wall-clock (s, log scale, 3 seeds)")
+    ax.set_yscale("log")
+    ax.set_title("Total runtime per (model, dataset) — log scale, sum of 3 seeds")
+    ax.legend(loc="upper left", ncol=5)
+    ax.grid(axis="y", alpha=0.3, which="both")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------
 # Dataset stats table
 # --------------------------------------------------------------------------
 
@@ -267,7 +396,8 @@ def main() -> None:
 
     df = load_metrics(args.metrics, models=MODELS_ORDER)
     plots = args.plots.split(",") if args.plots != "all" else [
-        "auc_bar", "ap_bar", "dataset_stats",
+        "auc_bar", "ap_bar", "learning_curves", "ranking_heatmap",
+        "beta_sensitivity", "runtime", "dataset_stats",
     ]
 
     if "auc_bar" in plots:
@@ -276,6 +406,28 @@ def main() -> None:
     if "ap_bar" in plots:
         plot_auc_comparison(df, args.out_dir / "ap_comparison.png", metric="ap")
         print(f"Wrote {args.out_dir / 'ap_comparison.png'}")
+    if "learning_curves" in plots:
+        curves_path = REPO_ROOT / "results" / "report" / "training_curves.jsonl"
+        if not curves_path.exists():
+            print(f"Skipping learning_curves — run scripts/parse_training_logs.py first to produce {curves_path}")
+        else:
+            curves_records = [json.loads(l) for l in curves_path.read_text().splitlines() if l.strip()]
+            curves_df = pd.DataFrame(curves_records)
+            for ds in DATASETS_ORDER:
+                if (curves_df["dataset"] == ds).any():
+                    out_p = args.out_dir / f"learning_curves_{ds}.png"
+                    plot_learning_curves(curves_df, ds, out_p)
+                    print(f"Wrote {out_p}")
+    if "ranking_heatmap" in plots:
+        plot_ranking_heatmap(df, args.out_dir / "ranking_heatmap.png")
+        print(f"Wrote {args.out_dir / 'ranking_heatmap.png'}")
+    if "beta_sensitivity" in plots:
+        beta_p = REPO_ROOT / "results" / "beta_grid_bitcoinotc.jsonl"
+        plot_beta_sensitivity(beta_p, args.out_dir / "beta_sensitivity.png")
+        print(f"Wrote {args.out_dir / 'beta_sensitivity.png'}")
+    if "runtime" in plots:
+        plot_runtime_comparison(df, args.out_dir / "runtime_comparison.png")
+        print(f"Wrote {args.out_dir / 'runtime_comparison.png'}")
     if "dataset_stats" in plots:
         stats = compute_dataset_stats()
         out = args.out_dir.parent / "dataset_stats.md"
