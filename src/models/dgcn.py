@@ -54,4 +54,60 @@ class SpectralGCNLayer(nn.Module):
         return out
 
 
-# DGCN composition (Task 2)
+class DGCN(DynamicLinkPredictor):
+    """DGCN baseline (Manessi 2020, WD-GCN variant).
+
+    WD-GCN = "Waterfall" Dynamic GCN: stack of GCN layers per snapshot, then
+    a single LSTM over the time dimension per node, then a shared MLP decoder.
+    No NRNAE — fair-baseline policy. See spec §4.
+    """
+
+    def __init__(
+        self,
+        num_nodes: int,
+        feat_dim: int = 64,
+        hidden_dim: int = 64,
+        num_gcn_layers: int = 2,
+        num_lstm_layers: int = 1,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        if num_gcn_layers < 1:
+            raise ValueError(f"num_gcn_layers must be >= 1, got {num_gcn_layers}")
+        if num_lstm_layers < 1:
+            raise ValueError(f"num_lstm_layers must be >= 1, got {num_lstm_layers}")
+        self.num_nodes = num_nodes
+        self.feat_dim = feat_dim
+        self.hidden_dim = hidden_dim
+
+        # Learnable node features (replaces paper's one-hot I_N — RAM constraint,
+        # documented in reproduction-log.md as a Plan 2 deviation).
+        self.node_emb = nn.Embedding(num_nodes, feat_dim)
+        nn.init.xavier_uniform_(self.node_emb.weight)
+
+        # GCN stack: layer 0 takes feat_dim, subsequent layers take hidden_dim
+        layers = []
+        for i in range(num_gcn_layers):
+            in_d = feat_dim if i == 0 else hidden_dim
+            layers.append(SpectralGCNLayer(in_d, hidden_dim, dropout=dropout))
+        self.gcn_layers = nn.ModuleList(layers)
+
+        # Per-node temporal LSTM over the GCN stack output sequence
+        self.lstm = nn.LSTM(
+            input_size=hidden_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_lstm_layers,
+            batch_first=True,
+        )
+
+        # Shared decoder
+        self.decoder = LinkDecoderMLP(
+            embed_dim=hidden_dim, hidden_dim=hidden_dim, dropout=dropout
+        )
+
+    def forward(self, snapshots, time_step: int) -> torch.Tensor:
+        """Forward — implemented in Task 3."""
+        raise NotImplementedError("DGCN.forward — implemented in Task 3")
+
+    def predict_link(self, Z, edges):
+        return self.decoder(Z, edges)

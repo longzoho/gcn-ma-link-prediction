@@ -1,7 +1,7 @@
 """Smoke tests for DGCN (path B reimpl from Manessi 2020, WD-GCN variant)."""
 import torch
 
-from src.models.dgcn import SpectralGCNLayer
+from src.models.dgcn import DGCN, SpectralGCNLayer
 
 
 # --------------------------------------------------------------------------
@@ -42,3 +42,33 @@ def test_spectral_gcn_layer_empty_edge_index():
     out = layer(x, ei, N)
     assert out.shape == (N, D)
     assert torch.isfinite(out).all()
+
+
+# --------------------------------------------------------------------------
+# DGCN composition
+# --------------------------------------------------------------------------
+
+def test_dgcn_construct():
+    """Default construction wires up embedding, 2 GCN layers, 1-layer LSTM, decoder."""
+    m = DGCN(
+        num_nodes=50,
+        feat_dim=64,
+        hidden_dim=64,
+        num_gcn_layers=2,
+        num_lstm_layers=1,
+        dropout=0.1,
+    )
+    assert m is not None
+    assert m.num_nodes == 50
+    assert m.hidden_dim == 64
+    assert m.node_emb.weight.shape == (50, 64)
+    assert len(m.gcn_layers) == 2
+    assert m.gcn_layers[0].in_dim == 64   # feat_dim
+    assert m.gcn_layers[0].out_dim == 64  # hidden_dim
+    assert m.gcn_layers[1].in_dim == 64   # hidden_dim
+    assert m.gcn_layers[1].out_dim == 64  # hidden_dim
+    assert isinstance(m.lstm, torch.nn.LSTM)
+    assert m.lstm.input_size == 64
+    assert m.lstm.hidden_size == 64
+    assert m.lstm.num_layers == 1
+    assert hasattr(m, "decoder")
