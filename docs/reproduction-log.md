@@ -345,9 +345,25 @@ DyGNN-specific: `edge_dim=16`, `decay_method="log"`, `decay_rate=1.0`, learnable
 
 Each cached snapshot now exposes `edge_ts` — float64 tensor of original timestamps for chronological sort within a snapshot. Other 3 models ignore the attribute. Cost: one-time ~2.5 min re-preprocess across all 5 datasets (LastFM not re-preprocessed).
 
-### Final results — 5 datasets × 3 seeds
+### Final results — 5 datasets × 3 seeds (15 records)
 
-_TODO: paste cross-comparison table from `results/report/baselines_summary.md` after Task 10 (full 15-run) lands. Smoke seed 42 CollegeMsg: AUC=0.9231._
+| Dataset | DyGNN AUC | DyGNN AP | best vs other 3 baselines |
+|---|---|---|---|
+| collegemsg   | 0.9072 ± 0.0132 | 0.9266 ± 0.0076 | 3rd (HTGN 0.9425 > DyGNN > GCN_MA 0.9005 > EvolveGCN 0.8643) |
+| bitcoinotc   | 0.9044 ± 0.0326 | 0.9301 ± 0.0185 | 2nd (HTGN 0.9147 > DyGNN > GCN_MA 0.8560 > EvolveGCN 0.8349) |
+| eut          | 0.9799 ± 0.0009 | 0.9797 ± 0.0009 | 2nd (HTGN 0.9838 > DyGNN > EvolveGCN 0.9245 > GCN_MA 0.9008) |
+| mooc_actions | **0.9956 ± 0.0001** | 0.9908 ± 0.0007 | **1st** (DyGNN > HTGN 0.9928 > GCN_MA 0.9845 > EvolveGCN 0.9523) |
+| wikipedia    | **0.9805 ± 0.0017** | 0.9786 ± 0.0018 | **1st** (DyGNN > HTGN 0.9556 > GCN_MA 0.8696 > EvolveGCN 0.8540) |
+| lastfm       | skipped | skipped | — |
+
+Total runtime: ~4.3h (15 runs, dominated by EUT 3 × 56 min). Smallest std across baselines (mooc 1e-4, eut 9e-4) — vectorized batched update is very stable. Bitcoinotc has highest variance (3.3e-2) due to small graph and high best_epoch sensitivity (158/90/67).
+
+### Cross-model observations (4-baseline comparison)
+
+1. **DyGNN wins on dense-feature datasets (mooc, wikipedia)** — both have rich edge timestamps and small T but high E/T (continuous-time signal). DyGNN's batched edge-message update captures this better than HTGN's pure-snapshot conv.
+2. **HTGN still wins on sparse-temporal datasets (collegemsg, bitcoinotc, eut)** — hierarchical structure dominates when each snapshot's edge set is small.
+3. **Mooc `best_epoch=1` for all 3 seeds** — same convergence-from-init pattern as HTGN had. Suggests the dataset is dominated by node identity rather than temporal dynamics; the zero-init memory + first-snapshot scatter is enough.
+4. **Per-epoch cache rebuild-on-grad** did not hurt DyGNN's convergence — runtimes (5-60 min per seed) are competitive with HTGN's snapshot-based loop.
 
 ### Engineering wins
 
